@@ -57,13 +57,10 @@ while True:
     data = send(raw)
     current_block = peer.current_block()['indep_hash']
     metadata = dict(
-        first = first,
-        prev = prev,
         txid = data['id'],
         offset = offset,
         current_block = current_block,
         api_block = data['block'],
-        start_block = start_block
         index = [value for leaf_count, value in indices]
     )
     result = send(json.dumps(metadata).encode())
