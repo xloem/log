@@ -51,6 +51,7 @@ prev = None
 peer = Peer()
 offset = 0
 indices = append_indices(3)
+index_values = indices
 
 while True:
     raw = capture.read(100000)
@@ -61,7 +62,7 @@ while True:
         offset = offset,
         current_block = current_block,
         api_block = data['block'],
-        index = [value for leaf_count, value in indices]
+        index = index_values
     )
     result = send(json.dumps(metadata).encode())
     prev = result['id']
@@ -73,7 +74,8 @@ while True:
 
     #eta = current_block['timestamp'] + (result['block'] - current_block['height']) * 60 * 2
     #eta = datetime.fromtimestamp(eta)
+    index_values = [value for leaf_count, value in indices]
     with open(first, 'wt') as fh:
-        json.dump(metadata, fh)
-    json.dump(metadata, sys.stdout)
+        json.dump(index_values[-1])
+    json.dump(index_values[-1], sys.stdout)
     sys.stdout.write('\n')
