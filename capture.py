@@ -65,11 +65,11 @@ while True:
     )
     result = send(json.dumps(metadata).encode())
     prev = result['id']
+    offset += len(raw)
     if first is None:
         first = prev
         start_block = current_block
-    indices.append(dict(dataitem=prev, current_block=current_block, offset=offset))
-    offset += len(raw)
+    indices.append(dict(dataitem=prev, current_block=current_block, end_offset=offset))
 
     #eta = current_block['timestamp'] + (result['block'] - current_block['height']) * 60 * 2
     #eta = datetime.fromtimestamp(eta)
