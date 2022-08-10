@@ -64,12 +64,12 @@ while True:
         index = [value for leaf_count, value in indices]
     )
     result = send(json.dumps(metadata).encode())
-    offset += len(raw)
     prev = result['id']
     if first is None:
         first = prev
         start_block = current_block
     indices.append(dict(dataitem=prev, current_block=current_block, offset=offset))
+    offset += len(raw)
 
     #eta = current_block['timestamp'] + (result['block'] - current_block['height']) * 60 * 2
     #eta = datetime.fromtimestamp(eta)
