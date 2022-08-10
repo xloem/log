@@ -19,8 +19,7 @@ class Stream:
         if type(block) in (int, str):
             block = self.block(block)
         for txid in block.txs:
-            tx = Transaction.frombytes(self.peer.tx2(txid))
-            tags = tx.tags
+            tags = self.peer.tx_tags(txid)
             if any((tag['name'].startswith(b'Bundle') for tag in tags)):
                 try:
                     stream = self.peer.stream(txid)
@@ -28,15 +27,15 @@ class Stream:
                     print(exc)
                     continue
                 with stream:
-                    header = ANS104BundleHeader.from_tags_stream(tags, stream)
+                    header = ANS104BundleHeader.fromstream(stream)
                     offset = header.get_len_bytes()
                     for id, length in header.length_by_id.items():
                         def head_fetcher():
                             stream.seek(offset)
-                            return ANS104DataItemHeader.from_tags_stream(tags, stream)
+                            return ANS104DataItemHeader.fromstream(stream, length)
                         def full_fetcher():
                             stream.seek(offset)
-                            return DataItem.from_tags_stream(tags, stream)
+                            return DataItem.fromstream(stream, length)
                         yield (txid, id, length, head_fetcher, full_fetcher)
                         offset += length
     def iterate_blocks(self, start_block, max_height):
@@ -50,12 +49,13 @@ class Stream:
             for block in self.iterate_blocks(start_block, max_height):
                 for bundle, id, length, head, full in self._scan_block(block):
                     if id == self.first:
-                        self.owner = self.last_metadata.owner
-                        print(self.owner)
                         full = full()
+                        self.owner = full.owner
+                        print(self.owner)
                         data = json.loads(full.data.decode())
                         self.data_by_offset[data['offset']] = data['txid']
                         break
+                print(f'{block.indep_hash} did not contain {self.first}')
         next_offset = 0
         for block in self.iterate_blocks(start_block, max_height):
             for id, length, head, full in self._scan_block(start_block):
