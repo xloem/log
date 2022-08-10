@@ -1,0 +1,3 @@
+wheel==0.37.1
+miniaudio==1.51
+PyArweave==0.4.16
