@@ -2,17 +2,18 @@
 
 import sys
 import json
-from ar import Block, Transaction, Peer, DataItem, ANS104BundleHeader
+from ar import Block, Transaction, Peer, DataItem, ANS104BundleHeader, ANS104DataItemHeader
 
 class Stream:
     def __init__(self, metadata, peer):
         self.peer = peer
-        self.start_block = self.block(metadata['start_block'])
+        self.start_block = self.block(metadata['start_block'] or metadata['current_block'])
         self.max_height = metadata['api_block']
         self.last_block = None
         self.offset = 0
         self.owner = None
         self.first = metadata['first']
+        self.first_backup = metadata['txid']
         self.bundle_by_item = {}
         self.data_by_offset = {}
     def _scan_block(self, block):
@@ -32,7 +33,7 @@ class Stream:
                     for id, length in header.length_by_id.items():
                         def head_fetcher():
                             stream.seek(offset)
-                            return ANS104DataItemHeader.fromstream(stream, length)
+                            return ANS104DataItemHeader.fromstream(stream)
                         def full_fetcher():
                             stream.seek(offset)
                             return DataItem.fromstream(stream, length)
@@ -48,14 +49,20 @@ class Stream:
         if self.owner is None:
             for block in self.iterate_blocks(start_block, max_height):
                 for bundle, id, length, head, full in self._scan_block(block):
-                    if id == self.first:
+                    if self.first is None and id == self.first_backup:
+                        head = head()
+                        self.owner = head.owner
+                        break
+                    elif id == self.first:
                         full = full()
                         self.owner = full.owner
-                        print(self.owner)
                         data = json.loads(full.data.decode())
                         self.data_by_offset[data['offset']] = data['txid']
                         break
                 print(f'{block.indep_hash} did not contain {self.first}')
+                if self.owner is not None:
+                    print(self.owner)
+                    break
         next_offset = 0
         for block in self.iterate_blocks(start_block, max_height):
             for id, length, head, full in self._scan_block(start_block):
