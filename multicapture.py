@@ -2,6 +2,7 @@
 
 import sys
 import threading
+import time
 from collections import deque
 from datetime import datetime
 from subprocess import Popen, PIPE
@@ -62,6 +63,7 @@ class Reader(threading.Thread):
                 self.data.extend(raws)
                 self.lock.release()
                 raws.clear()
+                print(len(self.data), 'captured')
         with self.lock:
             self.data.extend(raws)
             raws.clear()
@@ -78,6 +80,7 @@ class Storer(threading.Thread):
         super().__init__(*params, **kwparams)
         with self.lock:
             self.pool.add(self)
+            print(len(self.pool), 'storing')
         self.node = Node()
         self.pending = deque()
         self.start()
@@ -88,6 +91,7 @@ class Storer(threading.Thread):
                 with self.lock:
                     self.output.append(next_result)
                     Storer.output_idx += 1
+                    print('stored', Storer.output_idx)
             with self.input_lock:
                 with self.reader.lock:
                     if len(self.reader.data) == 0:
@@ -120,8 +124,12 @@ while True:
             Storer.output.clear()
             if not len(data):
                 if not running and not len(Storer.pool):
+                    print('index thread stopping no output left')
                     break
+                print('no output to index')
+                time.sleep(0.1)
                 continue
+            print('indexing', len(data), 'captures')
         current_block = peer.current_block()['indep_hash']
         metadata = dict(
             txid = [item['id'] for item in data],
