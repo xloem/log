@@ -34,7 +34,7 @@ except:
     print('Generating an identity ...')
     wallet = Wallet.generate(jwk_file='identity.json')
 
-node = Node()
+node = Node(timeout = 0.5)
 def send(data, **tags):
     di = DataItem(data = data)
     di.header.tags = [
@@ -55,7 +55,8 @@ class Reader(threading.Thread):
         self.start()
     def run(self):
         print('Capturing ...')
-        capture = Popen("./capture", stdout=PIPE).stdout
+        capture_proc = Popen("./capture", stdout=PIPE)
+        capture = capture_proc.stdout
         raws = []
         while running:
             raws.append(capture.read(100000))
@@ -63,10 +64,18 @@ class Reader(threading.Thread):
                 self.data.extend(raws)
                 self.lock.release()
                 raws.clear()
-                print(len(self.data), 'captured')
-        with self.lock:
-            self.data.extend(raws)
-            raws.clear()
+                print(len(self.data), 'captures queued while running')
+        print('Finishing capturing')
+        capture_proc.terminate()
+        while True:
+            raws.append(capture.read(100000))
+            with self.lock:
+                self.data.extend(raws)
+                raws.clear()
+                print('Finishing capturing', len(self.data))
+                if len(self.data[-1]) < 100000:
+                    break
+        print('Capturing finished')
 
 class Storer(threading.Thread):
     input_lock = threading.Lock()
@@ -79,35 +88,45 @@ class Storer(threading.Thread):
     reader = Reader()
     def __init__(self, *params, **kwparams):
         super().__init__(*params, **kwparams)
-        with self.input_lock:
-            self.proc_idx = Storer.proc_idx
-            Sorer.proc_idx += 1
-            self.pool.add(self)
-            print(self.proc_idx, 'launching storing')
         self.node = Node()
         self.pending = deque()
         self.start()
     def run(self):
+        with self.input_lock:
+            self.proc_idx = Storer.proc_idx
+            Storer.proc_idx += 1
+            self.pool.add(self)
+            print(self.proc_idx, 'launching storing')
         while True:
             while len(self.pending) and self.pending[0][0] == self.output_idx:
                 next_idx, next_result = self.pending.popleft()
+                print(self.proc_idx, 'taking storing lock with the next item')
                 with self.lock:
+                    print(self.proc_idx, 'took storing lock')
                     self.output.append(next_result)
                     Storer.output_idx += 1
-                    print('stored', Storer.output_idx)
-            with self.input_lock:
-                with self.reader.lock:
-                    if len(self.reader.data) == 0:
-                        if len(self.pending) or (len(self.pool) == 1 and running):
-                            continue
-                        self.pool.remove(self)
-                        return
-                    data = self.reader.data.popleft()
-                    if len(self.reader.data) > len(self.pool) * 2.25:
-                        Storer()
-                idx = self.idx
-                self.idx += 1
+                    print(self.proc_idx, 'stored', Storer.output_idx)
+            #print(self.proc_idx, 'taking input_lock then reader.lock')
+            with self.input_lock, self.reader.lock:
+                #print(self.proc_idx, 'took input_lock taking reader_lock')
+                #with self.reader.lock:
+                #print(self.proc_idx, 'took reader_lock')
+                if len(self.reader.data) == 0:
+                    if len(self.pending) or (len(self.pool) == 1 and running):
+                        continue
+                    print(self.proc_idx, 'finishing')
+                    self.pool.remove(self)
+                    return
+                data = self.reader.data.popleft()
+                if len(self.reader.data) > len(self.pool) * 2.25:
+                    print(self.proc_idx, 'spawning new')
+                    Storer()
+
+                idx = Storer.idx
+                Storer.idx += 1
+            print(self.proc_idx, 'sending', idx)
             result = send(data)
+            print(self.proc_idx, 'sent', idx)
             result['length'] = len(data)
             self.pending.append((idx, result))
 Storer()
@@ -129,8 +148,12 @@ while True:
                 if not running and not len(Storer.pool):
                     print('index thread stopping no output left')
                     break
-                print('no output to index')
-                time.sleep(0.1)
+                try:
+                    Storer.lock.release()
+                    #print('no output to index')
+                    time.sleep(0.1)
+                finally:
+                    Storer.lock.acquire()
                 continue
             print('indexing', len(data), 'captures')
         current_block = peer.current_block()['indep_hash']
