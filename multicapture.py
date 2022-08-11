@@ -42,7 +42,12 @@ def send(data, **tags):
         for key, val in tags.items()
     ]
     di.sign(wallet.rsa)
-    result = node.send_tx(di.tobytes())
+    while True:
+        try:
+            result = node.send_tx(di.tobytes())
+            break
+        except ArweaveNetworkException as exc:
+            print(exc)
     return result
 
 running = True
