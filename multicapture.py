@@ -73,14 +73,17 @@ class Storer(threading.Thread):
     lock = threading.Lock()
     idx = 0
     output_idx = 0
+    proc_idx = 0
     pool = set()
     output = deque()
     reader = Reader()
     def __init__(self, *params, **kwparams):
         super().__init__(*params, **kwparams)
-        with self.lock:
+        with self.input_lock:
+            self.proc_idx = Storer.proc_idx
+            Sorer.proc_idx += 1
             self.pool.add(self)
-            print(len(self.pool), 'storing')
+            print(self.proc_idx, 'launching storing')
         self.node = Node()
         self.pending = deque()
         self.start()
