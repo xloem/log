@@ -90,7 +90,7 @@ class Storer(threading.Thread):
                             continue
                         self.pool.remove(self)
                         return
-                    data = self.reader.popleft(0)
+                    data = self.reader.data.popleft(0)
                     if len(self.reader.data) > len(self.pool) * 2.25:
                         Storer()
                 idx = self.idx
