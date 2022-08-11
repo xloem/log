@@ -17,11 +17,12 @@ class Stream:
         self.peer = peer
         self.height_cache = {}
         self.bundle_cache = {}
+        self.cached_bundle = None
         if 'index' in metadata:
             # full metadata for an ending range
             self.tail = metadata
         elif 'end_offset' in metadata:
-            self.tail = json.load(self.dataitem(metadata['dataitem'], metadata['current_block'])[1])
+            self.tail = self.dataitem_json(metadata['dataitem'], metadata['current_block'])
     def iterate(self):
         offset = 0
         indices = [self.tail]
@@ -29,10 +30,13 @@ class Stream:
             while offset < indices[-1]['offset']:
                 for index in indices[-1]['index']:
                     if offset < index['end_offset']:
-                        indices.append(json.load(self.dataitem(index['dataitem'], index['current_block'])[1]))
+                        indices.append(self.dataitem_json(index['dataitem'], index['current_block']))
                         break
             index = indices.pop()
-            yield index, *self.dataitem(index['txid'])
+            assert offset == index['offset']
+            header, stream, length = self.dataitem(index['txid'], index['current_block'])
+            yield index, header, stream, length
+            offset += length
     def fetch_block(self, block):
         if type(block) is str:
             block = self.peer.block2_hash(block)
@@ -66,6 +70,13 @@ class Stream:
             height = self.height_cache[block]
         return height
     def dataitem(self, id, preceding_block):
+        try:
+            header, stream = self.cached_bundle
+            start, end = header.get_range(id)
+            stream.seek(start)
+            return ANS104DataItemHeader.fromstream(stream), stream, end - stream.tell()
+        except:
+            pass
         preceding_height = self.block_height(preceding_block)
         for height in range(preceding_height + 1, self.tail['api_block'] + 1):
             for bundle in self.block_bundles(height):
@@ -74,18 +85,25 @@ class Stream:
                 except ArweaveException as exc:
                     print(exc)
                     continue
-                with stream:
-                    header = ANS104BundleHeader.fromstream(stream)
-                    if id in header.length_by_id:
-                        start, end = header.get_range(id)
-                        with self.peer.stream(bundle, range=(start, end)) as stream:
-                            return ANS104DataItemHeader.fromstream(stream), stream
+                stream.__enter__()
+                header = ANS104BundleHeader.fromstream(stream)
+                if id in header.length_by_id:
+                    if self.cached_bundle is not None:
+                        old_header, old_stream = self.cached_bundle
+                        old_stream.__exit__(None, None)
+                    self.cached_bundle = header, stream
+                    start, end = header.get_range(id)
+                    stream.seek(start)
+                    return ANS104DataItemHeader.fromstream(stream), stream, end - stream.tell()
+                else:
+                    stream.__exit__(None, None)
         raise KeyError(id, preceding_block)
-        
-{"first": "nJpmTWzfVon0eUk68RX1wq0gfeYL74gUyo9nVy70ID4", "prev": "co8nbKFhW1uMOPvyrWGuc2gKtWxv3Ki2a0dRN4F5o3Q", "txid": "9OW38VxDVZqYU70UCSqcIF2hTEbGs5MtKvMcYRY3gnw", "offset": 600000, "current_block": "sC-WALW67G_iK9jDY-J7Tdwa0sZvQ3HIcIYwcx0Hc4TuDugReRcSCHeXJnC1OOXb", "api_block": 993097, "start_block": "sC-WALW67G_iK9jDY-J7Tdwa0sZvQ3HIcIYwcx0Hc4TuDugReRcSCHeXJnC1OOXb"}
+    def dataitem_json(self, id, preceding_block):
+        header, stream, length = self.dataitem(id, preceding_block)
+        return json.loads(stream.read(length))
 
 for fn in sys.argv[1:]:
     with open(fn) as fh:
         stream = Stream(json.load(fh), Peer())
-    for metadata, header, stream in stream.iterate():
-        print(metadata)
+    for metadata, header, stream, length in stream.iterate():
+        sys.stdout.buffer.write(stream.read(length))
