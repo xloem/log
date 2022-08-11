@@ -146,4 +146,6 @@ while True:
         json.dump(index_values[-1], sys.stdout)
         sys.stdout.write('\n')
     except KeyboardInterrupt:
+        if not running:
+            break
         running = False
