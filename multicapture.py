@@ -83,10 +83,15 @@ class Storer(threading.Thread):
         self.start()
     def run(self):
         while True:
+            while len(self.pending) and self.pending[0][0] == self.output_idx:
+                next_idx, next_result = self.pending.popleft()
+                with self.lock:
+                    self.output.append(next_result)
+                    Storer.output_idx += 1
             with self.input_lock:
                 with self.reader.lock:
                     if len(self.reader.data) == 0:
-                        if len(self.pool) == 1 and running:
+                        if len(self.pending) or (len(self.pool) == 1 and running):
                             continue
                         self.pool.remove(self)
                         return
@@ -98,11 +103,6 @@ class Storer(threading.Thread):
             result = send(data)
             result['length'] = len(data)
             self.pending.append((idx, result))
-            while len(self.pending) and self.pending[0][0] == self.output_idx:
-                next_idx, next_result = self.pending.popleft()
-                with self.lock:
-                    self.output.append(next_result)
-                    Storer.output_idx += 1
 Storer()
 
 first = None
