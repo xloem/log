@@ -98,7 +98,7 @@ class Storer(threading.Thread):
             result = send(data)
             result['length'] = len(data)
             self.pending.append((idx, result))
-            while self.pending[0][0] == self.output_idx:
+            while len(self.pending) and self.pending[0][0] == self.output_idx:
                 next_idx, next_result = self.pending.popleft()
                 with self.lock:
                     self.output.append(next_result)
@@ -142,7 +142,7 @@ while True:
         #eta = datetime.fromtimestamp(eta)
         index_values = [value for leaf_count, value in indices]
         with open(first, 'wt') as fh:
-            json.dump(index_values[-1])
+            json.dump(index_values[-1], fh)
         json.dump(index_values[-1], sys.stdout)
         sys.stdout.write('\n')
     except KeyboardInterrupt:
