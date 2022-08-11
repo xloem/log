@@ -44,6 +44,8 @@ def send(data, **tags):
     result = node.send_tx(di.tobytes())
     return result
 
+running = True
+
 class Reader(threading.Thread):
     def __init__(self, *params, **kwparams):
         super().__init__(*params, **kwparams)
@@ -54,12 +56,15 @@ class Reader(threading.Thread):
         print('Capturing ...')
         capture = Popen("./capture", stdout=PIPE).stdout
         raws = []
-        while True:
+        while running:
             raws.append(capture.read(100000))
             if self.lock.acquire(blocking=False):
                 self.data.extend(raws)
                 self.lock.release()
                 raws.clear()
+        with self.lock:
+            self.data.extend(raws)
+            raws.clear()
 
 class Storer(threading.Thread):
     input_lock = threading.Lock()
@@ -81,6 +86,8 @@ class Storer(threading.Thread):
             with self.input_lock:
                 with self.reader.lock:
                     if len(self.reader.data) == 0:
+                        if len(self.pool) == 1 and running:
+                            continue
                         self.pool.remove(self)
                         return
                     data = self.reader.popleft(0)
@@ -107,31 +114,36 @@ indices = append_indices(3)
 index_values = indices
 
 while True:
-    with Storer.lock:
-        data = [*Storer.output]
-        Storer.output.clear()
-    if not len(data):
-        continue
-    current_block = peer.current_block()['indep_hash']
-    metadata = dict(
-        txid = [item['id'] for item in data],
-        offset = offset,
-        current_block = current_block,
-        api_block = data[-1]['block'],
-        index = index_values
-    )
-    result = send(json.dumps(metadata).encode())
-    prev = result['id']
-    offset += sum((item['length'] for item in data))
-    if first is None:
-        first = prev
-        start_block = current_block
-    indices.append(dict(dataitem=prev, current_block=current_block, end_offset=offset))
-
-    #eta = current_block['timestamp'] + (result['block'] - current_block['height']) * 60 * 2
-    #eta = datetime.fromtimestamp(eta)
-    index_values = [value for leaf_count, value in indices]
-    with open(first, 'wt') as fh:
-        json.dump(index_values[-1])
-    json.dump(index_values[-1], sys.stdout)
-    sys.stdout.write('\n')
+    try:
+        with Storer.lock:
+            data = [*Storer.output]
+            Storer.output.clear()
+            if not len(data):
+                if not running and not len(Storer.pool):
+                    break
+                continue
+        current_block = peer.current_block()['indep_hash']
+        metadata = dict(
+            txid = [item['id'] for item in data],
+            offset = offset,
+            current_block = current_block,
+            api_block = data[-1]['block'],
+            index = index_values
+        )
+        result = send(json.dumps(metadata).encode())
+        prev = result['id']
+        offset += sum((item['length'] for item in data))
+        if first is None:
+            first = prev
+            start_block = current_block
+        indices.append(dict(dataitem=prev, current_block=current_block, end_offset=offset))
+    
+        #eta = current_block['timestamp'] + (result['block'] - current_block['height']) * 60 * 2
+        #eta = datetime.fromtimestamp(eta)
+        index_values = [value for leaf_count, value in indices]
+        with open(first, 'wt') as fh:
+            json.dump(index_values[-1])
+        json.dump(index_values[-1], sys.stdout)
+        sys.stdout.write('\n')
+    except KeyboardInterrupt:
+        running = False
