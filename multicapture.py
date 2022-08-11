@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import sys
+import threading
 from collections import deque
 from datetime import datetime
 from subprocess import Popen, PIPE
@@ -47,7 +48,7 @@ class Reader(threading.Thread):
     def __init__(self, *params, **kwparams):
         super().__init__(*params, **kwparams)
         self.data = deque()
-        self.lock = threading.Lock
+        self.lock = threading.Lock()
         self.start()
     def run(self):
         print('Capturing ...')
@@ -68,7 +69,7 @@ class Storer(threading.Thread):
     pool = set()
     output = deque()
     reader = Reader()
-    def __init__(self, reader, *params, **kwparams):
+    def __init__(self, *params, **kwparams):
         super().__init__(*params, **kwparams)
         with self.lock:
             self.pool.add(self)
@@ -107,8 +108,10 @@ index_values = indices
 
 while True:
     with Storer.lock:
-        data = Storer.output[:]
+        data = [*Storer.output]
         Storer.output.clear()
+    if not len(data):
+        continue
     current_block = peer.current_block()['indep_hash']
     metadata = dict(
         txid = [item['id'] for item in data],
