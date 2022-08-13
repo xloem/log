@@ -7,7 +7,7 @@ from collections import deque
 from datetime import datetime
 from subprocess import Popen, PIPE
 import json
-from ar import Peer, Wallet, DataItem, ArweaveNetworkException
+from ar import Peer, Wallet, DataItem, ArweaveNetworkException, logger
 from ar.utils import create_tag
 from bundlr import Node
 
@@ -50,8 +50,11 @@ def send(data, **tags):
             result = node.send_tx(di.tobytes())
             break
         except ArweaveNetworkException as exc:
+            text, code, exc2, response = exc.args
+            if code == 201: # already received
+                return {'id': di.header.id}
             #pass
-            print('exc', type(exc))
+            logger.exception(text)
     return result
 
 running = True
