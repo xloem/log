@@ -16,7 +16,7 @@ class append_indices(list):
     def __init__(self, degree = 2, initial_indices = []):
         super().__init__(*initial_indices)
         self.degree = degree
-        self.leaf_count = 0
+        self.leaf_count = sum((leaf_count for leaf_count, _ in self))
     def append(self, last_indices_id):
         self.leaf_count += 1
         leaf_count = self.leaf_count
@@ -91,6 +91,7 @@ class Storer(threading.Thread):
     pool = set()
     output = deque()
     reader = Reader()
+    exceptions = []
     def __init__(self, *params, **kwparams):
         super().__init__(*params, **kwparams)
         self.node = Node()
@@ -102,38 +103,44 @@ class Storer(threading.Thread):
             Storer.proc_idx += 1
             self.pool.add(self)
             print(self.proc_idx, 'launching storing')
-        while True:
-            while len(self.pending) and self.pending[0][0] == self.output_idx:
-                next_idx, next_result = self.pending.popleft()
-                print(self.proc_idx, 'taking storing lock with the next item')
-                with self.lock:
-                    print(self.proc_idx, 'took storing lock')
-                    self.output.append(next_result)
-                    Storer.output_idx += 1
-                    print(self.proc_idx, 'stored', Storer.output_idx)
-            #print(self.proc_idx, 'taking input_lock then reader.lock')
-            with self.input_lock, self.reader.lock:
-                #print(self.proc_idx, 'took input_lock taking reader_lock')
-                #with self.reader.lock:
-                #print(self.proc_idx, 'took reader_lock')
-                if len(self.reader.data) == 0:
-                    if len(self.pending) or (len(self.pool) == 1 and running):
-                        continue
-                    print(self.proc_idx, 'finishing')
-                    self.pool.remove(self)
-                    return
-                data = self.reader.data.popleft()
-                if len(self.reader.data) > len(self.pool) * 2.25:
-                    print(self.proc_idx, 'spawning new')
-                    Storer()
-
-                idx = Storer.idx
-                Storer.idx += 1
-            print(self.proc_idx, 'sending', idx)
-            result = send(data)
-            print(self.proc_idx, 'sent', idx)
-            result['length'] = len(data)
-            self.pending.append((idx, result))
+        try:
+            while True:
+                while len(self.pending) and self.pending[0][0] == self.output_idx:
+                    next_idx, next_result = self.pending.popleft()
+                    print(self.proc_idx, 'taking storing lock with the next item')
+                    with self.lock:
+                        print(self.proc_idx, 'took storing lock')
+                        self.output.append(next_result)
+                        Storer.output_idx += 1
+                        print(self.proc_idx, 'stored', Storer.output_idx)
+                #print(self.proc_idx, 'taking input_lock then reader.lock')
+                with self.input_lock, self.reader.lock:
+                    #print(self.proc_idx, 'took input_lock taking reader_lock')
+                    #with self.reader.lock:
+                    #print(self.proc_idx, 'took reader_lock')
+                    if len(self.reader.data) == 0:
+                        if len(self.pending) or (len(self.pool) == 1 and running):
+                            continue
+                        raise StopIteration()
+                    data = self.reader.data.popleft()
+                    if len(self.reader.data) > len(self.pool) * 2.25:
+                        print(self.proc_idx, 'spawning new')
+                        Storer()
+    
+                    idx = Storer.idx
+                    Storer.idx += 1
+                print(self.proc_idx, 'sending', idx)
+                result = send(data)
+                print(self.proc_idx, 'sent', idx)
+                result['length'] = len(data)
+                self.pending.append((idx, result))
+        except StopIteration:
+            print(self.proc_idx, 'finishing')
+        except Exception as exc:
+            print(self.proc_idx, 'raised exception', type(exc))
+            with self.lock:
+                self.exceptions.append(exc)
+        self.pool.remove(self)
 Storer()
 
 first = None
@@ -147,6 +154,9 @@ index_values = indices
 while True:
     try:
         with Storer.lock:
+            if len(Storer.exceptions):
+                for exception in Storer.exceptions:
+                    raise exception
             data = [*Storer.output]
             Storer.output.clear()
             if not len(data):

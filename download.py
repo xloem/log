@@ -34,9 +34,13 @@ class Stream:
                         break
             index = indices.pop()
             assert offset == index['offset']
-            header, stream, length = self.dataitem(index['txid'], index['current_block'])
-            yield index, header, stream, length
-            offset += length
+            txids = index['txid']
+            if type(txids) is not list:
+                txids = [txids]
+            for txid in txids:
+                header, stream, length = self.dataitem(txid, index['current_block'])
+                yield index, header, stream, length
+                offset += length
     def fetch_block(self, block):
         if type(block) is str:
             block = self.peer.block2_hash(block)
