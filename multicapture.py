@@ -7,9 +7,12 @@ from collections import deque
 from datetime import datetime
 from subprocess import Popen, PIPE
 import json
-from ar import Peer, Wallet, DataItem
+from ar import Peer, Wallet, DataItem, ArweaveNetworkException
 from ar.utils import create_tag
 from bundlr import Node
+
+import logging
+logging.basicConfig(level=logging.DEBUG)
 
 # indexes a balanced tree of past indices
 class append_indices(list):
@@ -47,7 +50,8 @@ def send(data, **tags):
             result = node.send_tx(di.tobytes())
             break
         except ArweaveNetworkException as exc:
-            print(exc)
+            #pass
+            print('exc', type(exc))
     return result
 
 running = True
@@ -139,7 +143,7 @@ Storer()
 first = None
 start_block = None
 prev = None
-peer = Peer()
+peer = Peer(retries=9999999)
 offset = 0
 indices = append_indices(3)
 index_values = indices
