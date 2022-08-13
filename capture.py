@@ -8,6 +8,8 @@ from ar import Peer, Wallet, DataItem
 from ar.utils import create_tag
 from bundlr import Node
 
+print('warning: this script hopefully works but drops chunks due to waiting on network and not buffering input')
+
 # indexes a balanced tree of past indices
 class append_indices(list):
     def __init__(self, degree = 2, initial_indices = []):
@@ -76,6 +78,6 @@ while True:
     #eta = datetime.fromtimestamp(eta)
     index_values = [value for leaf_count, value in indices]
     with open(first, 'wt') as fh:
-        json.dump(index_values[-1])
+        json.dump(index_values[-1], fh)
     json.dump(index_values[-1], sys.stdout)
     sys.stdout.write('\n')
