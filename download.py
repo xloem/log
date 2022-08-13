@@ -92,7 +92,10 @@ class Stream:
             try:
                 header, stream = self.cached_bundle
                 start, end = header.get_range(id)
-                stream.seek(start)
+                try:
+                    stream.seek(start)
+                except:
+                    stream.read(start - stream.tell())
                 return ANS104DataItemHeader.fromstream(stream), stream, end - stream.tell()
             except:
                 pass
@@ -116,7 +119,7 @@ class Stream:
                             try:
                                 stream.seek(start)
                             except:
-                                stream.read(start)
+                                stream.read(start - stream.tell())
                             return ANS104DataItemHeader.fromstream(stream), stream, end - stream.tell()
                         else:
                             stream.__exit__(None, None)
