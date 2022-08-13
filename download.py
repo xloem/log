@@ -113,7 +113,10 @@ class Stream:
                                 old_stream.__exit__(None, None)
                             self.cached_bundle = header, stream
                             start, end = header.get_range(id)
-                            stream.seek(start)
+                            try:
+                                stream.seek(start)
+                            except:
+                                stream.read(start)
                             return ANS104DataItemHeader.fromstream(stream), stream, end - stream.tell()
                         else:
                             stream.__exit__(None, None)
