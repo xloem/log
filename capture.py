@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-import sys
+import sys, time
 from datetime import datetime
 from subprocess import Popen, PIPE
 import json
@@ -55,14 +55,17 @@ offset = 0
 indices = append_indices(3)
 index_values = indices
 
+current_block = peer.current_block()
+
 while True:
     raw = capture.read(100000)
     data = send(raw)
-    current_block = peer.current_block()['indep_hash']
+    if time.time() > current_block['timestamp'] + 60:
+        current_block = peer.current_block()
     metadata = dict(
         txid = data['id'],
         offset = offset,
-        current_block = current_block,
+        current_block = current_block['indep_hash'],
         api_block = data['block'],
         index = index_values
     )
@@ -71,8 +74,8 @@ while True:
     offset += len(raw)
     if first is None:
         first = prev
-        start_block = current_block
-    indices.append(dict(dataitem=prev, current_block=current_block, end_offset=offset))
+        start_block = current_block['indep_hash']
+    indices.append(dict(dataitem=prev, current_block=current_block['indep_hash'], end_offset=offset))
 
     #eta = current_block['timestamp'] + (result['block'] - current_block['height']) * 60 * 2
     #eta = datetime.fromtimestamp(eta)

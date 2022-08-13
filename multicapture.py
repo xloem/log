@@ -116,10 +116,10 @@ class Storer(threading.Thread):
                         print(self.proc_idx, 'took storing lock')
                         self.output.append(next_result)
                         Storer.output_idx += 1
-                        print(self.proc_idx, 'stored', Storer.output_idx)
-                #print(self.proc_idx, 'taking input_lock then reader.lock')
+                        print(self.proc_idx, 'stored', Storer.output_idx, 'index queue size =', len(self.output))
+                #print(self.proc_idx, 'taking input_lock and reader.lock')
                 with self.input_lock, self.reader.lock:
-                    #print(self.proc_idx, 'took input_lock taking reader_lock')
+                    #print(self.proc_idx, 'took input_lock and reader.lock')
                     #with self.reader.lock:
                     #print(self.proc_idx, 'took reader_lock')
                     if len(self.reader.data) == 0:
@@ -155,6 +155,8 @@ offset = 0
 indices = append_indices(3)
 index_values = indices
 
+current_block = peer.current_block()
+
 while True:
     try:
         with Storer.lock:
@@ -175,11 +177,12 @@ while True:
                     Storer.lock.acquire()
                 continue
             print('indexing', len(data), 'captures')
-        current_block = peer.current_block()['indep_hash']
+        if time.time() > current_block['timestamp'] + 60:
+            current_block = peer.current_block()
         metadata = dict(
             txid = [item['id'] for item in data],
             offset = offset,
-            current_block = current_block,
+            current_block = current_block['indep_hash'],
             api_block = data[-1]['block'],
             index = index_values
         )
@@ -188,8 +191,8 @@ while True:
         offset += sum((item['length'] for item in data))
         if first is None:
             first = prev
-            start_block = current_block
-        indices.append(dict(dataitem=prev, current_block=current_block, end_offset=offset))
+            start_block = current_block['indep_hash']
+        indices.append(dict(dataitem=prev, current_block=current_block['indep_hash'], end_offset=offset))
     
         #eta = current_block['timestamp'] + (result['block'] - current_block['height']) * 60 * 2
         #eta = datetime.fromtimestamp(eta)
