@@ -159,6 +159,8 @@ indices = append_indices(3)
 index_values = indices
 
 current_block = peer.current_block()
+last_time = time.time()
+metadata = dict(api_block = None)
 
 while True:
     try:
@@ -180,13 +182,14 @@ while True:
                     Storer.lock.acquire()
                 continue
             print('indexing', len(data), 'captures')
-        if time.time() > current_block['timestamp'] + 60:
+        if time.time() > last_time + 60:
             current_block = peer.current_block()
+            last_time = time.time()
         metadata = dict(
             txid = [item['id'] for item in data],
             offset = offset,
             current_block = current_block['indep_hash'],
-            api_block = data[-1]['block'],
+            api_block = [metadata['api_block'], *(item['block'] for item in data if 'block' in item)][-1],
             index = index_values
         )
         result = send(json.dumps(metadata).encode())

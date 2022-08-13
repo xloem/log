@@ -56,12 +56,14 @@ indices = append_indices(3)
 index_values = indices
 
 current_block = peer.current_block()
+last_time = time.time()
 
 while True:
     raw = capture.read(100000)
     data = send(raw)
-    if time.time() > current_block['timestamp'] + 60:
+    if time.time() > last_time + 60:
         current_block = peer.current_block()
+        last_time = time.time()
     metadata = dict(
         txid = data['id'],
         offset = offset,
