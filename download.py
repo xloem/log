@@ -7,6 +7,7 @@ import ar.utils
 try:
     from tqdm import tqdm
 except:
+    logging.warn('tqdm not found, no progress output')
     def tqdm(iter, *params, **kwparams):
         yield from iter
 
