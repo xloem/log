@@ -126,7 +126,7 @@ class Storer(threading.Thread):
                     #with self.reader.lock:
                     #print(self.proc_idx, 'took reader_lock')
                     if len(self.reader.data) == 0:
-                        if len(self.pending) or (len(self.pool) == 1 and running):
+                        if len(self.pending) or (len(self.pool) == 1 and self.reader.is_alive()):
                             continue
                         raise StopIteration()
                     data = self.reader.data.popleft()
