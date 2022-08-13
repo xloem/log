@@ -59,11 +59,14 @@ def send(data, **tags):
 
 running = True
 
+class Data:
+    data = deque()
+    lock = threading.Lock()
+
+
 class Reader(threading.Thread):
     def __init__(self, *params, **kwparams):
         super().__init__(*params, **kwparams)
-        self.data = deque()
-        self.lock = threading.Lock()
         self.start()
     def run(self):
         print('Capturing ...')
@@ -72,22 +75,37 @@ class Reader(threading.Thread):
         raws = []
         while running:
             raws.append(capture.read(100000))
-            if self.lock.acquire(blocking=False):
-                self.data.extend(raws)
-                self.lock.release()
+            if Data.lock.acquire(blocking=False):
+                Data.data.extend(raws)
+                Data.lock.release()
                 raws.clear()
-                print(len(self.data), 'captures queued while running')
+                print(len(Data.data), 'captures queued while running')
         print('Finishing capturing')
         capture_proc.terminate()
         while True:
             raws.append(capture.read(100000))
             with self.lock:
-                self.data.extend(raws)
+                Data.data.extend(raws)
                 raws.clear()
                 print('Finishing capturing', len(self.data))
-                if len(self.data[-1]) < 100000:
+                if len(Data.data[-1]) < 100000:
                     break
         print('Capturing finished')
+
+class Locationer:
+    def __init__(self, *params, **kwparams):
+        super().__init__(*params, **kwparams)
+        self.start()
+    def run(self):
+        print('Locationing ...')
+        while True:
+            try:
+                location_proc = Popen('termux-location', stdout=PIPE)
+            except:
+                print('Locationing failed.')
+                break
+            data = json.load(location_proc.stdout)
+
 
 class Storer(threading.Thread):
     input_lock = threading.Lock()
@@ -120,17 +138,17 @@ class Storer(threading.Thread):
                         self.output.append(next_result)
                         Storer.output_idx += 1
                         print(self.proc_idx, 'stored', Storer.output_idx, 'index queue size =', len(self.output))
-                #print(self.proc_idx, 'taking input_lock and reader.lock')
-                with self.input_lock, self.reader.lock:
-                    #print(self.proc_idx, 'took input_lock and reader.lock')
+                #print(self.proc_idx, 'taking input_lock and Data.lock')
+                with self.input_lock, Data.lock:
+                    #print(self.proc_idx, 'took input_lock and Data.lock')
                     #with self.reader.lock:
                     #print(self.proc_idx, 'took reader_lock')
-                    if len(self.reader.data) == 0:
+                    if len(Data.data) == 0:
                         if len(self.pending) or (len(self.pool) == 1 and self.reader.is_alive()):
                             continue
                         raise StopIteration()
-                    data = self.reader.data.popleft()
-                    if len(self.reader.data) > len(self.pool) * 2.25:
+                    data = Data.data.popleft()
+                    if len(Data.data) > len(self.pool) * 2.25:
                         print(self.proc_idx, 'spawning new')
                         Storer()
     
