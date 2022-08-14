@@ -15,17 +15,23 @@ class append_indices(list):
     def __init__(self, degree = 2, initial_indices = []):
         super().__init__(*initial_indices)
         self.degree = degree
-        self.leaf_count = 0
-    def append(self, last_indices_id):
+        self.leaf_count = sum((leaf_count for type, data, size, leaf_count in self))
+    def append(self, last_indices_id, data, size):
+        if last_indices_id is not None:
+            node_leaf_count = self.leaf_count
+            node_size = self.size
+            idx = 0
+            for idx, (branch_type, branch_data, branch_size, branch_leaf_count) in enumerate(self):
+                if branch_leaf_count * self.degree <= leaf_count:
+                    break
+                node_leaf_count -= branch_leaf_count
+                node_size -= branch_size
+                idx += 1 # to append if the loop falls through
+            self[idx:] = [(1, last_indices_id, node_size, node_leaf_count), (0, data, size, 1)]
+        else:
+            self.append((0, data, size, 1))
         self.leaf_count += 1
-        leaf_count = self.leaf_count
-        idx = 0
-        for idx, (sub_leaf_count, value) in enumerate(self):
-            if sub_leaf_count * self.degree <= leaf_count:
-                break
-            leaf_count -= sub_leaf_count
-            idx += 1 # to append if the loop falls through
-        self[idx:] = [(leaf_count, last_indices_id)]
+        self.size += size
 
 try:
     wallet = Wallet('identity.json')
@@ -49,7 +55,7 @@ def send(data, **tags):
 
 first = None
 start_block = None
-prev = None
+prev_indices_id = None
 peer = Peer()
 offset = 0
 indices = append_indices(3)
@@ -64,25 +70,36 @@ while True:
     if time.time() > last_time + 60:
         current_block = peer.current_block()
         last_time = time.time()
-    metadata = dict(
-        txid = data['id'],
-        offset = offset,
-        current_block = current_block['indep_hash'],
-        api_block = data['block'],
-        index = index_values
+    indices.append(
+        prev_indices_id,
+        dict(
+            capture = dict(
+                ditem = [data['id']],
+            ),
+            min_block = (current_block['height'], current_block['indep_hash']),
+            api_block = data['block'],
+        ),
+        len(raw)
     )
+    metadata = [(type, data, size) for type, data, size, *_ in indices]
     result = send(json.dumps(metadata).encode())
-    prev = result['id']
-    offset += len(raw)
-    if first is None:
-        first = prev
-        start_block = current_block['indep_hash']
-    indices.append(dict(dataitem=prev, current_block=current_block['indep_hash'], end_offset=offset))
+    prev_indices_id = dict(
+        ditem = [result['id']],
+        min_block = (current_block['height'], current_block['indep_hash']),
+        api_block = result['block'],
+    )
+    #offset += len(raw)
+    #if first is None:
+    #    first = prev
+    #    start_block = current_block['indep_hash']
+    #indices.append(dict(dataitem=prev, current_block=current_block['indep_hash'])#, end_offset=offset), )
 
     #eta = current_block['timestamp'] + (result['block'] - current_block['height']) * 60 * 2
     #eta = datetime.fromtimestamp(eta)
-    index_values = [value for leaf_count, value in indices]
+    #index_values = [value for leaf_count, value in indices]
     with open(first, 'wt') as fh:
-        json.dump(index_values[-1], fh)
-    json.dump(index_values[-1], sys.stdout)
+        #json.dump(index_values[-1], fh)
+        json.dump(prev_indices_id, fh)
+    #json.dump(index_values[-1], sys.stdout)
+    json.dump(prev_indices_id, sys.stdout)
     sys.stdout.write('\n')
