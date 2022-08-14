@@ -90,9 +90,9 @@ while True:
         api_block = result['block'],
     )
     #offset += len(raw)
-    #if first is None:
-    #    first = prev
-    #    start_block = current_block['indep_hash']
+    if first is None:
+        first = prev_indices_id['ditem'][0]
+        start_block = current_block['indep_hash']
     #indices.append(dict(dataitem=prev, current_block=current_block['indep_hash'])#, end_offset=offset), )
 
     #eta = current_block['timestamp'] + (result['block'] - current_block['height']) * 60 * 2
