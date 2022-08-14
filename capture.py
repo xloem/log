@@ -23,7 +23,7 @@ class append_indices(list):
             node_size = self.size
             idx = 0
             for idx, (branch_type, branch_data, branch_size, branch_leaf_count) in enumerate(self):
-                if branch_leaf_count * self.degree <= leaf_count:
+                if branch_leaf_count * self.degree <= node_leaf_count:
                     break
                 node_leaf_count -= branch_leaf_count
                 node_size -= branch_size
