@@ -17,22 +17,25 @@ class append_indices(list):
         self.degree = degree
         self.leaf_count = sum((leaf_count for type, data, size, leaf_count in self))
         self.size = sum((size for type, data, size, leaf_count in self))
-    def append(self, last_indices_id, data, size):
+    def append(self, last_indices_id, data, data_start, data_size):
         if last_indices_id is not None:
             node_leaf_count = self.leaf_count
             node_size = self.size
+            node_start = 0
             idx = 0
             for idx, (branch_type, branch_data, branch_size, branch_leaf_count) in enumerate(self):
                 if branch_leaf_count * self.degree <= node_leaf_count:
                     break
                 node_leaf_count -= branch_leaf_count
                 node_size -= branch_size
+                node_start += branch_size
                 idx += 1 # to append if the loop falls through
-            self[idx:] = ((1, last_indices_id, node_size, node_leaf_count), (0, data, size, 1))
+            self[idx:] = ((1, last_indices_id, node_start, node_size, node_leaf_count), (0, data, data_start, data_size, 1))
         else:
-            self[len(self):] = ((0, data, size, 1),)
+            asset len(self) == 0
+            self[0:] = ((0, data, data_start, data_size, 1),)
         self.leaf_count += 1
-        self.size += size
+        self.size += data_size
 
 try:
     wallet = Wallet('identity.json')
@@ -60,7 +63,7 @@ prev_indices_id = None
 peer = Peer()
 offset = 0
 indices = append_indices(3)
-index_values = indices
+#index_values = indices
 
 current_block = peer.current_block()
 last_time = time.time()
@@ -80,9 +83,10 @@ while True:
             min_block = (current_block['height'], current_block['indep_hash']),
             api_block = data['block'],
         ),
-        len(raw)
+        data_start = 0,
+        data_size = len(raw)
     )
-    metadata = [(type, data, size) for type, data, size, *_ in indices]
+    metadata = [(type, data, start, size) for type, data, start, size, *_ in indices]
     result = send(json.dumps(metadata).encode())
     prev_indices_id = dict(
         ditem = [result['id']],
