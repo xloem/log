@@ -16,6 +16,7 @@ class append_indices(list):
         super().__init__(*initial_indices)
         self.degree = degree
         self.leaf_count = sum((leaf_count for type, data, size, leaf_count in self))
+        self.size = sum((size for type, data, size, leaf_count in self))
     def append(self, last_indices_id, data, size):
         if last_indices_id is not None:
             node_leaf_count = self.leaf_count
