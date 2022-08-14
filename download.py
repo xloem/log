@@ -19,29 +19,69 @@ class Stream:
         self.height_cache = {}
         self.bundle_cache = {}
         self.cached_bundle = None
-        if 'index' in metadata:
+        if type(metadata) is list:
             # full metadata for an ending range
             self.tail = metadata
-        elif 'end_offset' in metadata:
-            self.tail = self.dataitem_json(metadata['dataitem'], metadata['current_block'])
+        elif 'ditem' in metadata:
+            self.tail = sum((self.dataitem_json(ditem, metadata['min_block'][-1]) for ditem in metadata['ditem']), start=[])
+    def __len__(self):
+        return sum((size for type, data, start, size in self.tail))
     def iterate(self):
-        offset = 0
-        indices = [self.tail]
+        # this function is the guts of a class that wraps a tree root record
+        # indexing binary data on a blockchain. it is intended to yield the
+        # chunks in order when called.
+
+        # the number of bytes that have been yielded, increased every chunk
+        stream_output_offset = 0
+
+        # the size of all the chunks: the sum of the sizes of each child node
+        total_size = len(self)
+
+        # for debugging: tracks nodes that should only be visited once, to check this
+        visited = set()
+
+        # a stack to perform a depth-first enumeration of the tree
+        # atm, the child offset is not tracked as inner nodes are traversed.
+        # instead, the global offset is tracked, and children are enumerated
+        # again when backtracking, under the idea that total time is still
+        # O(log n)
+        #           index      stream offset  index offset  region size
+        indices = [(self.tail, 0,             0,            total_size)]
+
         while len(indices):
-            while offset < indices[-1]['offset']:
-                for index in indices[-1]['index']:
-                    if offset < index['end_offset']:
-                        indices.append(self.dataitem_json(index['dataitem'], index['current_block']))
+            index, index_offset, index_start, index_size = indices[-1]
+            index_offset_in_stream = index_offset - index_start
+            for type, index, index_substart, index_subsize, *_ in index:
+                if index_offset_in_stream == stream_output_offset and index_subsize > 0:
+                    if type == 1:
+                        for ditem in index['ditem']:
+                            assert ditem not in visited
+                            visited.add(ditem)
+                        ditem = sum((self.dataitem_json(ditem, index['min_block'][-1]) for ditem in index['ditem']), start=[])
+                        # after appending, it is not processing correct region
+                        #print('adding', ditem)
+                        indices.append((ditem, index_offset_in_stream, index_substart, index_subsize))
                         break
-            index = indices.pop()
-            assert offset == index['offset']
-            txids = index['txid']
-            if type(txids) is not list:
-                txids = [txids]
-            for txid in txids:
-                header, stream, length = self.dataitem(txid, index['current_block'])
-                yield index, header, stream, length
-                offset += length
+                    else:
+                        #print('yielding', index)
+                        for ditem in index['capture']['ditem']:
+                            assert ditem not in visited
+                            visited.add(ditem)
+                            header, stream, length = self.dataitem(ditem, index['min_block'][-1])
+                            assert index_subsize == length
+                            assert length > 0
+                            yield index, header, stream, length
+                            #print(index_offset_in_stream, stream_output_offset, index['capture']['ditem'])
+                            stream_output_offset += length
+                else:
+                    #print('skipping', index)
+                    assert index_offset_in_stream <= stream_output_offset
+                index_offset_in_stream += index_subsize
+            else:
+                #print('popping')
+                indices.pop()
+        assert stream_output_offset == total_size
+        assert index_offset_in_stream == total_size
     def fetch_block(self, block):
         if type(block) is str:
             block = self.peer.block2_hash(block)
@@ -136,3 +176,38 @@ for fn in sys.argv[1:]:
         stream = Stream(json.load(fh), Peer())
     for metadata, header, stream, length in stream.iterate():
         sys.stdout.buffer.write(stream.read(length))
+{"ditem": ["u1PDzuiGDbIRpQEFw6OZx6Dm_0tkmNTyY1jT2lkXQTc"], "min_block": [995159, "-p20J8zfYeZn8jFYiV-X4I62ubge3RW-2pthuB_hN5LrKqA2L4tvX55fgwSoAatG"], "api_block": 995559}
+[
+    [
+        1,
+        {
+            "ditem": [
+                "nIOsVBh6IM0EWq10P882TH9OhFw272ByHFJZD8G6rrA"
+            ],
+            "min_block": [
+                995159,
+                "-p20J8zfYeZn8jFYiV-X4I62ubge3RW-2pthuB_hN5LrKqA2L4tvX55fgwSoAatG"
+            ],
+            "api_block": 995559
+        },
+        0,
+        900000
+    ],
+    [
+        0,
+        {
+            "capture": {
+                "ditem": [
+                    "rWTfslX9PzbtNeTjlrHmCHQXuW16nZg7iQ7WAY3Y-ZM"
+                ]
+            },
+            "min_block": [
+                995159,
+                "-p20J8zfYeZn8jFYiV-X4I62ubge3RW-2pthuB_hN5LrKqA2L4tvX55fgwSoAatG"
+            ],
+            "api_block": 995559
+        },
+        0,
+        100000
+    ]
+]
