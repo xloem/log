@@ -32,7 +32,7 @@ class append_indices(list):
                 idx += 1 # to append if the loop falls through
             self[idx:] = ((1, last_indices_id, node_start, node_size, node_leaf_count), (0, data, data_start, data_size, 1))
         else:
-            asset len(self) == 0
+            assert len(self) == 0
             self[0:] = ((0, data, data_start, data_size, 1),)
         self.leaf_count += 1
         self.size += data_size
