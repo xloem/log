@@ -27,9 +27,9 @@ class append_indices(list):
                 node_leaf_count -= branch_leaf_count
                 node_size -= branch_size
                 idx += 1 # to append if the loop falls through
-            self[idx:] = [(1, last_indices_id, node_size, node_leaf_count), (0, data, size, 1)]
+            self[idx:] = ((1, last_indices_id, node_size, node_leaf_count), (0, data, size, 1))
         else:
-            self.append((0, data, size, 1))
+            self[idx:] = ((0, data, size, 1),)
         self.leaf_count += 1
         self.size += size
 
