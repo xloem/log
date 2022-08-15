@@ -44,7 +44,8 @@ except:
     wallet = Wallet.generate(jwk_file='identity.json')
 
 print('Capturing ...')
-capture = Popen("./capture", stdout=PIPE).stdout
+#capture = Popen("./capture", stdout=PIPE).stdout
+capture = Popen(('sh','-c','./capture | tee last_capture.log.bin'), stdout=PIPE).stdout
 
 node = Node()
 def send(data, **tags):
