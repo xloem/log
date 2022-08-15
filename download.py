@@ -25,7 +25,7 @@ class Stream:
         elif 'ditem' in metadata:
             self.tail = sum((self.dataitem_json(ditem, metadata['min_block'][-1]) for ditem in metadata['ditem']), start=[])
     def __len__(self):
-        return sum((size for type, data, start, size in self.tail))
+        return sum((size for leaf_count, data, start, size in self.tail))
     def iterate(self):
         # this function is the guts of a class that wraps a tree root record
         # indexing binary data on a blockchain. it is intended to yield the
@@ -51,9 +51,9 @@ class Stream:
         while len(indices):
             index, index_offset, index_start, index_size = indices[-1]
             index_offset_in_stream = index_offset - index_start
-            for type, index, index_substart, index_subsize, *_ in index:
+            for leaf_count, index, index_substart, index_subsize, *_ in index:
                 if index_offset_in_stream == stream_output_offset and index_subsize > 0:
-                    if type == 1:
+                    if leaf_count > 0:
                         for ditem in index['ditem']:
                             assert ditem not in visited
                             visited.add(ditem)

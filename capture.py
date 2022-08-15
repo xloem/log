@@ -7,6 +7,7 @@ import json
 from ar import Peer, Wallet, DataItem
 from ar.utils import create_tag
 from bundlr import Node
+from flat_tree import flat_tree
 
 print('warning: this script hopefully works but drops chunks due to waiting on network and not buffering input')
 
@@ -63,7 +64,7 @@ start_block = None
 prev_indices_id = None
 peer = Peer()
 offset = 0
-indices = append_indices(3)
+indices = flat_tree(3) #append_indices(3)
 #index_values = indices
 
 current_block = peer.current_block()
@@ -77,6 +78,7 @@ while True:
         last_time = time.time()
     indices.append(
         prev_indices_id,
+        len(raw),
         dict(
             capture = dict(
                 ditem = [data['id']],
@@ -84,10 +86,8 @@ while True:
             min_block = (current_block['height'], current_block['indep_hash']),
             api_block = data['block'],
         ),
-        data_start = 0,
-        data_size = len(raw)
     )
-    metadata = [(type, data, start, size) for type, data, start, size, *_ in indices]
+    metadata = indices.snap()#[(type, data, start, size) for type, data, start, size, *_ in indices]
     result = send(json.dumps(metadata).encode())
     prev_indices_id = dict(
         ditem = [result['id']],
