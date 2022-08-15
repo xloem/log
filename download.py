@@ -141,7 +141,7 @@ class Stream:
                 pass
             try:
                 preceding_height = self.block_height(preceding_block)
-                for height in range(preceding_height + 1, self.tail['api_block'] + 1) if hasattr(self, 'tail') else itertools.count(preceding_height + 1):
+                for height in range(preceding_height + 1, max((data['api_block'] for _, data, *_ in self.tail))) if hasattr(self, 'tail') else itertools.count(preceding_height + 1):
                     for bundle in self.block_bundles(height):
                         try:
                             stream = self.peer.stream(bundle)
