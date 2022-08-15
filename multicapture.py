@@ -10,26 +10,27 @@ import json
 from ar import Peer, Wallet, DataItem, ArweaveNetworkException, logger
 from ar.utils import create_tag
 from bundlr import Node
+from flat_tree import flat_tree
 
 import logging
 logging.basicConfig(level=logging.DEBUG)
 
 # indexes a balanced tree of past indices
-class append_indices(list):
-    def __init__(self, degree = 2, initial_indices = []):
-        super().__init__(*initial_indices)
-        self.degree = degree
-        self.leaf_count = sum((leaf_count for leaf_count, _ in self))
-    def append(self, last_indices_id):
-        self.leaf_count += 1
-        leaf_count = self.leaf_count
-        idx = 0
-        for idx, (sub_leaf_count, value) in enumerate(self):
-            if sub_leaf_count * self.degree <= leaf_count:
-                break
-            leaf_count -= sub_leaf_count
-            idx += 1 # to append if the loop falls through
-        self[idx:] = [(leaf_count, last_indices_id)]
+#class append_indices(list):
+#    def __init__(self, degree = 2, initial_indices = []):
+#        super().__init__(*initial_indices)
+#        self.degree = degree
+#        self.leaf_count = sum((leaf_count for leaf_count, _ in self))
+#    def append(self, last_indices_id):
+#        self.leaf_count += 1
+#        leaf_count = self.leaf_count
+#        idx = 0
+#        for idx, (sub_leaf_count, value) in enumerate(self):
+#            if sub_leaf_count * self.degree <= leaf_count:
+#                break
+#            leaf_count -= sub_leaf_count
+#            idx += 1 # to append if the loop falls through
+#        self[idx:] = [(leaf_count, last_indices_id)]
 
 try:
     wallet = Wallet('identity.json')
@@ -70,7 +71,8 @@ class Reader(threading.Thread):
         self.start()
     def run(self):
         print('Capturing ...')
-        capture_proc = Popen("./capture", stdout=PIPE)
+        #capture_proc = Popen("./capture", stdout=PIPE)
+        capture_proc = Popen(('sh','-c','./capture | tee last_capture.log.bin'), stdout=PIPE)
         capture = capture_proc.stdout
         raws = []
         while running:
@@ -79,15 +81,15 @@ class Reader(threading.Thread):
                 Data.data.extend(raws)
                 Data.lock.release()
                 raws.clear()
-                print(len(Data.data), 'captures queued while running')
+                #print(len(Data.data), 'captures queued while running')
         print('Finishing capturing')
         capture_proc.terminate()
         while True:
             raws.append(capture.read(100000))
-            with self.lock:
+            with Data.lock:
                 Data.data.extend(raws)
                 raws.clear()
-                print('Finishing capturing', len(self.data))
+                print('Finishing capturing', len(Data.data))
                 if len(Data.data[-1]) < 100000:
                     break
         print('Capturing finished')
@@ -132,12 +134,12 @@ class Storer(threading.Thread):
             while True:
                 while len(self.pending) and self.pending[0][0] == self.output_idx:
                     next_idx, next_result = self.pending.popleft()
-                    print(self.proc_idx, 'taking storing lock with the next item')
+                    #print(self.proc_idx, 'taking storing lock with the next item')
                     with self.lock:
-                        print(self.proc_idx, 'took storing lock')
+                        #print(self.proc_idx, 'took storing lock')
                         self.output.append(next_result)
                         Storer.output_idx += 1
-                        print(self.proc_idx, 'stored', Storer.output_idx, 'index queue size =', len(self.output))
+                        #print(self.proc_idx, 'stored', Storer.output_idx, 'index queue size =', len(self.output))
                 #print(self.proc_idx, 'taking input_lock and Data.lock')
                 with self.input_lock, Data.lock:
                     #print(self.proc_idx, 'took input_lock and Data.lock')
@@ -149,14 +151,14 @@ class Storer(threading.Thread):
                         raise StopIteration()
                     data = Data.data.popleft()
                     if len(Data.data) > len(self.pool) * 2.25:
-                        print(self.proc_idx, 'spawning new')
+                        #print(self.proc_idx, 'spawning new')
                         Storer()
     
                     idx = Storer.idx
                     Storer.idx += 1
-                print(self.proc_idx, 'sending', idx)
+                #print(self.proc_idx, 'sending', idx)
                 result = send(data)
-                print(self.proc_idx, 'sent', idx)
+                #print(self.proc_idx, 'sent', idx)
                 result['length'] = len(data)
                 self.pending.append((idx, result))
         except StopIteration:
@@ -173,15 +175,17 @@ start_block = None
 prev = None
 peer = Peer(retries=9999999)
 offset = 0
-indices = append_indices(3)
-index_values = indices
+indices = flat_tree(3) #append_indices(3)
+#index_values = indices
 
 current_block = peer.current_block()
 last_time = time.time()
-metadata = dict(api_block = None)
+
+prev = None
 
 while True:
     try:
+        #print('taking Storer lock')
         with Storer.lock:
             if len(Storer.exceptions):
                 for exception in Storer.exceptions:
@@ -199,31 +203,39 @@ while True:
                 finally:
                     Storer.lock.acquire()
                 continue
-            print('indexing', len(data), 'captures')
+            print('indexing', len(data), 'captures, releasing Storer lock')
         if time.time() > last_time + 60:
             current_block = peer.current_block()
             last_time = time.time()
-        metadata = dict(
-            txid = [item['id'] for item in data],
-            offset = offset,
-            current_block = current_block['indep_hash'],
-            api_block = [metadata['api_block'], *(item['block'] for item in data if 'block' in item)][-1],
-            index = index_values
+        indices.append(
+            prev,
+            sum((item['length'] for item in data)),
+            dict(
+                capture = dict(
+                    ditem = [item['id'] for item in data],
+                ),
+                min_block = (current_block['height'], current_block['indep_hash']),
+                api_block = max((item['block'] for item in data if 'block' in item)) or None,
+            )
         )
-        result = send(json.dumps(metadata).encode())
-        prev = result['id']
-        offset += sum((item['length'] for item in data))
+        result = send(json.dumps(indices.snap()).encode())
+        prev = dict(
+            ditem = [result['id']],
+            min_block = (current_block['height'], current_block['indep_hash']),
+            api_block = result['block']
+        )
         if first is None:
-            first = prev
+            first = result['id']
             start_block = current_block['indep_hash']
-        indices.append(dict(dataitem=prev, current_block=current_block['indep_hash'], end_offset=offset))
     
         #eta = current_block['timestamp'] + (result['block'] - current_block['height']) * 60 * 2
         #eta = datetime.fromtimestamp(eta)
-        index_values = [value for leaf_count, value in indices]
+        #index_values = [value for leaf_count, value in indices]
         with open(first, 'wt') as fh:
-            json.dump(index_values[-1], fh)
-        json.dump(index_values[-1], sys.stdout)
+            #json.dump(index_values[-1], fh)
+            json.dump(prev, fh)
+        #json.dump(index_values[-1], sys.stdout)
+        json.dump(prev, sys.stdout)
         sys.stdout.write('\n')
     except KeyboardInterrupt:
         if not running:

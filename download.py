@@ -23,7 +23,7 @@ class Stream:
             # full metadata for an ending range
             self.tail = metadata
         elif 'ditem' in metadata:
-            self.tail = sum((self.dataitem_json(ditem, metadata['min_block'][-1]) for ditem in metadata['ditem']), start=[])
+            self.tail = sum((self.dataitem_json(ditem, metadata['min_block']) for ditem in metadata['ditem']), start=[])
     def __len__(self):
         return sum((size for leaf_count, data, start, size in self.tail))
     def iterate(self):
@@ -57,22 +57,24 @@ class Stream:
                         for ditem in index['ditem']:
                             assert ditem not in visited
                             visited.add(ditem)
-                        ditem = sum((self.dataitem_json(ditem, index['min_block'][-1]) for ditem in index['ditem']), start=[])
+                        ditem = sum((self.dataitem_json(ditem, index['min_block']) for ditem in index['ditem']), start=[])
                         # after appending, it is not processing correct region
                         #print('adding', ditem)
                         indices.append((ditem, index_offset_in_stream, index_substart, index_subsize))
                         break
                     else:
                         #print('yielding', index)
+                        length_sum = 0
                         for ditem in index['capture']['ditem']:
                             assert ditem not in visited
                             visited.add(ditem)
-                            header, stream, length = self.dataitem(ditem, index['min_block'][-1])
-                            assert index_subsize == length
+                            header, stream, length = self.dataitem(ditem, index['min_block'])
+                            length_sum += length
                             assert length > 0
                             yield index, header, stream, length
                             #print(index_offset_in_stream, stream_output_offset, index['capture']['ditem'])
                             stream_output_offset += length
+                        assert index_subsize == length_sum
                 else:
                     #print('skipping', index)
                     assert index_offset_in_stream <= stream_output_offset
@@ -122,6 +124,10 @@ class Stream:
             bundles = self.bundle_cache[block]
         return bundles
     def block_height(self, block):
+        if type(block) is list:
+            for block in block:
+                if type(block) is int:
+                    return block
         height = self.height_cache.get(block)
         if height is None:
             self._cache_block(block)

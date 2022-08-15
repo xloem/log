@@ -7,36 +7,10 @@ import json
 from ar import Peer, Wallet, DataItem
 from ar.utils import create_tag
 from bundlr import Node
+# indexes a balanced tree of past indices
 from flat_tree import flat_tree
 
 print('warning: this script hopefully works but drops chunks due to waiting on network and not buffering input')
-
-# indexes a balanced tree of past indices
-class append_indices(list):
-    def __init__(self, degree = 2, initial_indices = []):
-        super().__init__(*initial_indices)
-        self.degree = degree
-        self.leaf_count = sum((leaf_count for type, data, size, leaf_count in self))
-        self.size = sum((size for type, data, size, leaf_count in self))
-    def append(self, last_indices_id, data, data_start, data_size):
-        if last_indices_id is not None:
-            node_leaf_count = self.leaf_count
-            node_size = self.size
-            node_start = 0
-            idx = 0
-            for idx, (branch_type, branch_data, branch_offset, branch_size, branch_leaf_count) in enumerate(self):
-                if branch_leaf_count * self.degree <= node_leaf_count:
-                    break
-                node_leaf_count -= branch_leaf_count
-                node_size -= branch_size
-                node_start += branch_size
-                idx += 1 # to append if the loop falls through
-            self[idx:] = ((1, last_indices_id, node_start, node_size, node_leaf_count), (0, data, data_start, data_size, 1))
-        else:
-            assert len(self) == 0
-            self[0:] = ((0, data, data_start, data_size, 1),)
-        self.leaf_count += 1
-        self.size += data_size
 
 try:
     wallet = Wallet('identity.json')
