@@ -11,6 +11,7 @@ from ar import Peer, Wallet, DataItem, ArweaveNetworkException, logger
 from ar.utils import create_tag
 from bundlr import Node
 from flat_tree import flat_tree
+import watchdog.observers, watchdog.events
 
 import logging
 #logging.basicConfig(level=logging.DEBUG)
@@ -75,7 +76,11 @@ class BinaryProcessStream(threading.Thread):
         self.start()
     def run(self):
         print(f'Beginning {self.name} ...')
-        capture_proc = Popen(self.proc, stdout=PIPE)
+        try:
+            capture_proc = Popen(self.proc, stdout=PIPE)
+        except:
+            print(f'{self.name.title()} failed.')
+            return
         capture = capture_proc.stdout
         raws = []
         while running:
@@ -101,40 +106,7 @@ class BinaryProcessStream(threading.Thread):
                 break
         print(f'Finished {self.name}')
 
-#class Reader(threading.Thread):
-#    def __init__(self, *params, **kwparams):
-#        super().__init__(*params, **kwparams)
-#        self.start()
-#    def run(self):
-#        print('Capturing ...')
-#        #capture_proc = Popen("./capture", stdout=PIPE)
-#        capture_proc = Popen(('sh','-c','./capture | tee last_capture.log.bin'), stdout=PIPE)
-#        capture = capture_proc.stdout
-#        raws = []
-#        while running:
-#            raws.append(capture.read(100000))
-#            if Data.lock.acquire(blocking=False):
-#                Data.extend_needs_lk('capture', raws)
-#                Data.lock.release()
-#                raws.clear()
-#                #print(len(Data.data), 'captures queued while running')
-#        print('Finishing capturing')
-#        capture_proc.terminate()
-#        while True:
-#            raw = capture.read(100000)
-#            if len(raw) > 0:
-#                raws.append(raw)
-#                with Data.lock:
-#                    Data.extend_needs_lk('capture', raws)
-#                    raws.clear()
-#                    print('Finishing capturing', len(Data.data))
-#                    if len(Data.data[-1]) < 100000:
-#                        break
-#            elif not len(raws):
-#                break
-#        print('Capturing finished')
-
-class Locationer:
+class Locationer(threading.Thread):
     def __init__(self, *params, **kwparams):
         super().__init__(*params, **kwparams)
         self.start()
@@ -156,6 +128,17 @@ class Locationer:
                 raws.clear()
         print('Locationing finished')
 
+class Tarer(watchdog.events.LoggingEventHandler):
+    def __init__(self, path, *params, **kwparams):
+        super().__init__(*params, **kwparams)
+        self.path = path
+        self.start()
+    def run(self):
+        print(f'Taring {self.path} ...')
+        self.observer = watchdog.observers.Observer()
+        self.observer.schedule(self, self.path, recursive=True)
+        self.observer.start()
+
 
 class Storer(threading.Thread):
     input_lock = threading.Lock()
@@ -168,7 +151,7 @@ class Storer(threading.Thread):
     #reader = BinaryProcessStream('capture', './capture')
     readers = [
         BinaryProcessStream('capture', ('sh','-c','./capture | tee last_capture.log.bin')),
-        Locationar(),
+        Locationer(),
         BinaryProcessStream('logcat', 'logcat')
     ]
     exceptions = []
@@ -231,7 +214,7 @@ class Storer(threading.Thread):
                             continue
                         if time.time() > last_log_time_2 + 1:
                             last_log_time_2 = time.time()
-                            self.print('Stopping', self.proc_idx, 'len(self.pending) =', len(self.pending_input), len(self.pending_output), '; len(self.pool) =', len(self.pool), '; self.reader.is_alive() =', self.reader.is_alive())
+                            self.print('Stopping', self.proc_idx, 'len(self.pending) =', len(self.pending_input), len(self.pending_output), '; len(self.pool) =', len(self.pool), '; self.reader.is_alive() =', *(reader.is_alive() for reader in self.readers))
                         raise StopIteration()
                     channel, data = Data.data.popleft()
                     if len(Data.data) > len(self.pool) * (len(self.pending_input) + len(self.pending_output)):
@@ -250,7 +233,7 @@ class Storer(threading.Thread):
                 with self.lock:
                     self.exceptions.append(exc)
             with Data.lock:
-                if len(self.pool) == 1 and self.reader.is_alive():
+                if len(self.pool) == 1 and any((reader.is_alive() for reader in self.readers)):
                     #print(self.proc_idx, 'closed but reader still running, continuing anyway')
                     continue
                 self.pool.remove(self)
@@ -281,7 +264,7 @@ while True:
             data = Storer.output.copy()
             Storer.output.clear()
             if not len(data):
-                if not running and not len(Storer.pool) and not Storer.reader.is_alive():
+                if not running and not len(Storer.pool) and not any((reader.is_alive() for reader in Storer.readers)):
                     print('index thread stopping no output left')
                     break
                 try:
