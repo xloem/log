@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 
-import sys
-import threading
-import time
+import os, sys, threading, time
 from collections import defaultdict, deque
 from datetime import datetime
 from subprocess import Popen, PIPE
@@ -12,6 +10,7 @@ from ar.utils import create_tag
 from bundlr import Node
 from flat_tree import flat_tree
 import watchdog.observers, watchdog.events
+import zstandard as zstd
 
 import logging
 #logging.basicConfig(level=logging.DEBUG)
@@ -22,7 +21,7 @@ except:
     print('Generating an identity ...')
     wallet = Wallet.generate(jwk_file='identity.json')
 
-node = Node(timeout = 0.5)
+node = Node(timeout = 1)
 def send(data, **tags):
     di = DataItem(data = data)
     di.header.tags = [
@@ -69,10 +68,11 @@ class Data:
         cls.data.extend(((type, item) for item in items))
 
 class BinaryProcessStream(threading.Thread):
-    def __init__(self, name, proc, *params, **kwparams):
+    def __init__(self, name, proc, *params, constant_output = False, **kwparams):
         super().__init__(*params, **kwparams)
         self.name = name
         self.proc = proc
+        self.constant_output = constant_output
         self.start()
     def run(self):
         print(f'Beginning {self.name} ...')
@@ -84,7 +84,8 @@ class BinaryProcessStream(threading.Thread):
         capture = capture_proc.stdout
         raws = []
         while running:
-            raws.append(capture.read(100000))
+            raw = capture.read1(100000) if not self.constant_output else capture.read(100000)
+            raws.append(raw)
             if Data.lock.acquire(blocking=False):
                 Data.extend_needs_lk(self.name, raws)
                 Data.lock.release()
@@ -93,16 +94,19 @@ class BinaryProcessStream(threading.Thread):
         print(f'Finishing {self.name}ing')
         capture_proc.terminate()
         while True:
+            #print(f'{self.name}: reading 1')
             raw = capture.read(100000)
+            #print(f'{self.name} read: {len(raw)} len(raws)={len(raws)} proc.poll={capture_proc.poll()}')
             if len(raw) > 0:
-                raws.appends(raw)
+                raws.append(raw)
+            if len(raws):
                 with Data.lock:
                     Data.extend_needs_lk(self.name, raws)
                     raws.clear()
                     print(f'Finishing {self.name}', len(Data.data))
-                    if len(Data.data[-1]) < 100000:
-                        break
-            elif not len(raws):
+                    #if len(Data.data[-1]) < 100000:
+                    #    break
+            elif capture_proc.poll() is not None:
                 break
         print(f'Finished {self.name}')
 
@@ -128,17 +132,127 @@ class Locationer(threading.Thread):
                 raws.clear()
         print('Locationing finished')
 
-class Tarer(watchdog.events.LoggingEventHandler):
+class PathWatcher(threading.Thread, watchdog.events.FileSystemEventHandler):
     def __init__(self, path, *params, **kwparams):
         super().__init__(*params, **kwparams)
         self.path = path
+        self.compressor = zstd.ZstdCompressor(write_checksum=True,write_content_size=True)
+        self.chunker = None
         self.start()
+        #self.run()
     def run(self):
-        print(f'Taring {self.path} ...')
+        print(f'Watching {self.path} ...')
         self.observer = watchdog.observers.Observer()
         self.observer.schedule(self, self.path, recursive=True)
-        self.observer.start()
-
+        self.cur_file = None
+        self.cur_filename = ''
+        self.just_closed = True
+        self.queued_files = set()
+        try:
+            self.observer.start()
+        except:
+            print(f'{self.path} failed')
+            return
+        try:
+            while running:
+                time.sleep(0.1)
+        finally:
+            self.observer.stop()
+            self.observer.join()
+            self.close_file()
+            self.process_queue()
+            self.close_file()
+    def start_file(self, event):
+        assert self.cur_file is None
+        if event.is_directory:
+            return
+        with Data.lock:
+            Data.append_needs_lk(self.path, event.src_path.encode() + b'\0')
+        self.just_closed = True
+        try:
+            self.cur_file = open(event.src_path, 'rb')
+        except:
+            self.cur_file = None
+            return False
+        self.cur_filename = event.src_path
+        self.chunker = self.compressor.chunker(chunk_size=100000)
+        self.continue_file(event)
+    def continue_file(self, event):
+        #print('continue file')
+        assert event is None or self.cur_filename == event.src_path
+        start = self.cur_file.tell()
+        while True:
+            in_chunk = self.cur_file.read()
+            if not in_chunk:
+                break
+            for out_chunk in self.chunker.compress(in_chunk):
+                with Data.lock:
+                    Data.append_needs_lk(self.path, out_chunk)
+        end = self.cur_file.tell() - start
+        if end > start:
+            self.just_closed = False
+    def close_file(self):
+        if self.cur_file is not None:
+            self.continue_file(None)
+            self.cur_file.close()
+            self.cur_file = None
+            print('finish')
+            for out_chunk in self.chunker.finish():
+                with Data.lock:
+                    Data.append_needs_lk(self.path, out_chunk)
+            self.chunker = None
+    def on_created(self, event):
+        #print('on_created', event.src_path)
+        if event.is_directory:
+            return
+        if self.cur_file is not None:
+            if self.just_closed:
+                self.close_file()
+            else:
+                self.queued_files.add(event.src_path)
+                return
+        self.start_file(event)
+    def on_modified(self, event):
+        if event.is_directory:
+            return
+        #print('on_modified', event.src_path)
+        if self.cur_filename is None:
+            self.start_file(event)
+        elif self.cur_filename == event.src_path:
+            self.continue_file(event)
+        elif self.just_closed:
+            self.close_file()
+            self.start_file(event)
+        else:
+            #print('just_closed is False, queueing')
+            self.queued_files.add(event.src_path)
+    def on_closed(self, event):
+        if event.is_directory:
+            return
+        #print('on_closed', event.src_path)
+        if self.cur_file is not None and self.cur_filename == event.src_path:
+            #print('close: continue')
+            self.continue_file(event)
+            if len(self.queued_files):
+                #print('files queued')
+                self.close_file()
+            else:
+                #print('just_closed = true')
+                self.just_closed = True
+        self.process_queue()
+    def process_queue(self):
+        if self.cur_file is None:
+            while len(self.queued_files):
+                queued = self.queued_files.pop()
+                if self.cur_filename != queued:
+                    self.close_file()
+                self.on_created(watchdog.events.FileSystemEvent(queued))
+    def on_moved(self, event):
+        if event.is_directory:
+            return
+        if self.cur_file is not None and self.cur_filename == event.src_path:
+            self.cur_filename = event.dest_path
+            self.continue_file(None)
 
 class Storer(threading.Thread):
     input_lock = threading.Lock()
@@ -150,9 +264,12 @@ class Storer(threading.Thread):
     output = defaultdict(deque)
     #reader = BinaryProcessStream('capture', './capture')
     readers = [
-        BinaryProcessStream('capture', ('sh','-c','./capture | tee last_capture.log.bin')),
+        BinaryProcessStream('capture', ('sh','-c','./capture | tee last_capture.log.bin'), constant_output = True),
         Locationer(),
-        BinaryProcessStream('logcat', 'logcat')
+        BinaryProcessStream('logcat', 'logcat', constant_output = True),
+        BinaryProcessStream('journalctl', ('journalctl', '--follow')),
+        PathWatcher(os.path.abspath('.')),
+        PathWatcher('/sdcard/Download'),
     ]
     exceptions = []
     logs = {}
@@ -163,6 +280,7 @@ class Storer(threading.Thread):
         self.pending_output = deque()
         self.start()
     def print(self, *params):
+        return
         log = self.logs[self.proc_idx]
         if not len(log) or log[-1] != params:
             self.logs[self.proc_idx].append(params)
@@ -233,7 +351,7 @@ class Storer(threading.Thread):
                 with self.lock:
                     self.exceptions.append(exc)
             with Data.lock:
-                if len(self.pool) == 1 and any((reader.is_alive() for reader in self.readers)):
+                if len(self.pool) == 1 and any((reader.is_alive() for reader in self.readers)) and not len(self.exceptions):
                     #print(self.proc_idx, 'closed but reader still running, continuing anyway')
                     continue
                 self.pool.remove(self)
@@ -254,30 +372,36 @@ last_time = time.time()
 
 prev = None
 
+data = None
 while True:
     try:
         #print('taking Storer lock')
-        with Storer.lock:
-            if len(Storer.exceptions):
-                for exception in Storer.exceptions:
-                    raise exception
-            data = Storer.output.copy()
-            Storer.output.clear()
-            if not len(data):
-                if not running and not len(Storer.pool) and not any((reader.is_alive() for reader in Storer.readers)):
-                    print('index thread stopping no output left')
-                    break
-                try:
-                    Storer.lock.release()
-                    #print('no output to index')
-                    time.sleep(0.1)
-                finally:
-                    Storer.lock.acquire()
-                continue
-            print('indexing', len(data), 'captures, releasing Storer lock')
-        if time.time() > last_time + 60:
-            current_block = peer.current_block()
-            last_time = time.time()
+        if data is None:
+            with Storer.lock:
+                if len(Storer.exceptions):
+                    for exception in Storer.exceptions:
+                        raise exception
+                data = Storer.output.copy()
+                Storer.output.clear()
+                if not len(data):
+                    if not running and not len(Storer.pool) and not any((reader.is_alive() for reader in Storer.readers)):
+                        print('index thread stopping no output left')
+                        break
+                    try:
+                        Storer.lock.release()
+                        #print('no output to index')
+                        time.sleep(0.1)
+                    finally:
+                        Storer.lock.acquire()
+                    data = None
+                    continue
+                print('indexing', len(data.get('capture', [])), 'captures, releasing Storer lock')
+            if time.time() > last_time + 60:
+                current_block = peer.current_block()
+                last_time = time.time()
+        else:
+            pass
+            #print('data left over')
         # this could be a dict of lengths
         lengths = sum((capture['length'] for capture in data.get('capture', [])))
         datas = {
@@ -293,15 +417,21 @@ while True:
             dict(
                 **datas,
                 min_block = (current_block['height'], current_block['indep_hash']),
-                api_block = max((item['block'] for items in data.values() for item in items if 'block' in item)) or None,
+                api_block = max((0, *(item['block'] for items in data.values() for item in items if 'block' in item))) or None,
             )
         )
-        result = send(json.dumps(indices.snap()).encode())
+        indices_snap = indices.snap()
+        try:
+            result = send(json.dumps(indices.snap()).encode())
+        except:
+            indices = flat_tree(3, indices_snap)
+            raise
         prev = dict(
             ditem = [result['id']],
             min_block = (current_block['height'], current_block['indep_hash']),
             api_block = result['block']
         )
+        data = None
         if first is None:
             first = result['id']
             start_block = current_block['indep_hash']
@@ -314,7 +444,7 @@ while True:
             json.dump(prev, fh)
         #json.dump(index_values[-1], sys.stdout)
         json.dump(prev, sys.stdout)
-        sys.stdout.write('\n')
+        sys.stdout.write('\n')# + str(type(data)) + '\n')
     except KeyboardInterrupt:
         print('got a keyboard interrupt, setting running to false')
         if not running:

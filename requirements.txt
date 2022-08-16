@@ -1,3 +1,4 @@
 PyArweave==0.5.6
 flat-tree @ git+https://github.com/xloem/flat_tree@main
 watchdog==2.1.9
+zstandard==0.18.0

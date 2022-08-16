@@ -2,7 +2,8 @@
 
 import itertools, logging, sys, time
 import json
-from ar import Block, Transaction, Peer, DataItem, ANS104BundleHeader, ANS104DataItemHeader, ArweaveException, logger
+from flat_tree import flat_tree
+from ar import Block, Transaction, Peer, DataItem, ANS104BundleHeader, ANS104DataItemHeader, ArweaveException, ArweaveNetworkException, logger
 import ar.utils
 try:
     from tqdm import tqdm
@@ -16,6 +17,7 @@ except:
 class Stream:
     def __init__(self, metadata, peer):
         self.peer = peer
+        self.channels = set()
         self.height_cache = {}
         self.bundle_cache = {}
         self.cached_bundle = None
@@ -31,6 +33,8 @@ class Stream:
         # indexing binary data on a blockchain. it is intended to yield the
         # chunks in order when called.
 
+        comparison = flat_tree(degree=3)
+
         # the number of bytes that have been yielded, increased every chunk
         stream_output_offset = 0
 
@@ -38,7 +42,7 @@ class Stream:
         total_size = len(self)
 
         # for debugging: tracks nodes that should only be visited once, to check this
-        visited = set()
+        visited = {}
 
         # a stack to perform a depth-first enumeration of the tree
         # atm, the child offset is not tracked as inner nodes are traversed.
@@ -51,30 +55,40 @@ class Stream:
         while len(indices):
             index, index_offset, index_start, index_size = indices[-1]
             index_offset_in_stream = index_offset - index_start
+            expected_stream_output_offset = index_offset + index_size
             for leaf_count, index, index_substart, index_subsize, *_ in index:
                 if index_offset_in_stream == stream_output_offset and index_subsize > 0:
                     if leaf_count > 0:
                         for ditem in index['ditem']:
                             assert ditem not in visited
-                            visited.add(ditem)
+                            visited[ditem] = indices.copy()
                         ditem = sum((self.dataitem_json(ditem, index['min_block']) for ditem in index['ditem']), start=[])
                         # after appending, it is not processing correct region
                         #print('adding', ditem)
                         indices.append((ditem, index_offset_in_stream, index_substart, index_subsize))
                         break
                     else:
+                        comparison.append(comparison.leaf_count, index_subsize, index)
                         #print('yielding', index)
-                        length_sum = 0
-                        for ditem in index['capture']['ditem']:
-                            assert ditem not in visited
-                            visited.add(ditem)
-                            header, stream, length = self.dataitem(ditem, index['min_block'])
-                            length_sum += length
-                            assert length > 0
-                            yield index, header, stream, length
-                            #print(index_offset_in_stream, stream_output_offset, index['capture']['ditem'])
-                            stream_output_offset += length
-                        assert index_subsize == length_sum
+                        for channel_name, channel_data in index.items():
+                            if type(channel_data) is dict and 'ditem' in channel_data:
+                                print('yielding', channel_name, '@', stream_output_offset)
+                                if stream_output_offset == 565248:
+                                    import pdb; pdb.set_trace()
+                                self.channels.add(channel_name)
+                                length_sum = 0
+                                for ditem in channel_data['ditem']:
+                                    assert ditem not in visited
+                                    visited[ditem] = indices.copy()
+                                    header, stream, length = self.dataitem(ditem, index['min_block'])
+                                    length_sum += length
+                                    #assert length > 0
+                                    yield index, channel_name, header, stream, length
+                                    #print(index_offset_in_stream, stream_output_offset, index['capture']['ditem'])
+                                    if channel_name == 'capture':
+                                        stream_output_offset += length
+                                if channel_name == 'capture':
+                                    assert index_subsize == length_sum
                 else:
                     #print('skipping', index)
                     assert index_offset_in_stream <= stream_output_offset
@@ -82,6 +96,7 @@ class Stream:
             else:
                 #print('popping')
                 indices.pop()
+                assert stream_output_offset == expected_stream_output_offset
         assert stream_output_offset == total_size
         assert index_offset_in_stream == total_size
     def fetch_block(self, block):
@@ -154,8 +169,15 @@ class Stream:
                         except ArweaveException as exc:
                             logger.exception(f'peer did not provide {bundle}')
                             continue
-                        stream.__enter__()
-                        header = ANS104BundleHeader.fromstream(stream)
+                        try:
+                            stream.__enter__()
+                            header = ANS104BundleHeader.fromstream(stream)
+                        except ArweaveNetworkException as exc:
+                            stream.__exit__(None, None)
+                            if exc.args[1] == 404:
+                                logger.exception(f'peer did not provide chunks for {bundle}')
+                                continue
+                            raise
                         if id in header.length_by_id:
                             if self.cached_bundle is not None:
                                 old_header, old_stream = self.cached_bundle
@@ -180,40 +202,8 @@ class Stream:
 for fn in sys.argv[1:]:
     with open(fn) as fh:
         stream = Stream(json.load(fh), Peer())
-    for metadata, header, stream, length in stream.iterate():
-        sys.stdout.buffer.write(stream.read(length))
-{"ditem": ["u1PDzuiGDbIRpQEFw6OZx6Dm_0tkmNTyY1jT2lkXQTc"], "min_block": [995159, "-p20J8zfYeZn8jFYiV-X4I62ubge3RW-2pthuB_hN5LrKqA2L4tvX55fgwSoAatG"], "api_block": 995559}
-[
-    [
-        1,
-        {
-            "ditem": [
-                "nIOsVBh6IM0EWq10P882TH9OhFw272ByHFJZD8G6rrA"
-            ],
-            "min_block": [
-                995159,
-                "-p20J8zfYeZn8jFYiV-X4I62ubge3RW-2pthuB_hN5LrKqA2L4tvX55fgwSoAatG"
-            ],
-            "api_block": 995559
-        },
-        0,
-        900000
-    ],
-    [
-        0,
-        {
-            "capture": {
-                "ditem": [
-                    "rWTfslX9PzbtNeTjlrHmCHQXuW16nZg7iQ7WAY3Y-ZM"
-                ]
-            },
-            "min_block": [
-                995159,
-                "-p20J8zfYeZn8jFYiV-X4I62ubge3RW-2pthuB_hN5LrKqA2L4tvX55fgwSoAatG"
-            ],
-            "api_block": 995559
-        },
-        0,
-        100000
-    ]
-]
+    for metadata, channel_name, header, stream, length in stream.iterate():
+        sys.stderr.write('channel data: ' + channel_name + ': ' + str(length)+'\n')#repr(stream.read(length))+'\n')
+        if channel_name == 'capture':
+            sys.stdout.buffer.write(stream.read(length))
+        #else:
