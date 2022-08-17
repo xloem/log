@@ -280,7 +280,7 @@ class Storer(threading.Thread):
         self.pending_output = deque()
         self.start()
     def print(self, *params):
-        return
+        #return
         log = self.logs[self.proc_idx]
         if not len(log) or log[-1] != params:
             self.logs[self.proc_idx].append(params)
@@ -335,7 +335,7 @@ class Storer(threading.Thread):
                             self.print('Stopping', self.proc_idx, 'len(self.pending) =', len(self.pending_input), len(self.pending_output), '; len(self.pool) =', len(self.pool), '; self.reader.is_alive() =', *(reader.is_alive() for reader in self.readers))
                         raise StopIteration()
                     channel, data = Data.data.popleft()
-                    if len(Data.data) > len(self.pool) * (len(self.pending_input) + len(self.pending_output)):
+                    if len(Data.data) > len(self.pool) * 2.25: #(len(self.pending_input) + len(self.pending_output)):
                         self.print(self.proc_idx, 'spawning new; expected idx =', Storer.proc_idx)
                         Storer()
     
