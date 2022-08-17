@@ -408,7 +408,7 @@ while True:
         datas = {
             type: dict(
                 ditem = [item['id'] for item in items],
-                length = sum((item['length'] for item in items))
+                length = sum((item.get('length', 1) for item in items))
             )
             for type, items in data.items()
         }
