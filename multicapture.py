@@ -268,8 +268,8 @@ class Storer(threading.Thread):
         Locationer(),
         BinaryProcessStream('logcat', 'logcat', constant_output = True),
         BinaryProcessStream('journalctl', ('journalctl', '--follow')),
-        PathWatcher(os.path.abspath('.')),
-        PathWatcher('/sdcard/Download'),
+        #PathWatcher(os.path.abspath('.')),
+        #PathWatcher('/sdcard/Download'),
     ]
     exceptions = []
     logs = {}
@@ -350,7 +350,7 @@ class Storer(threading.Thread):
                 self.print(self.proc_idx, 'raised exception', type(exc))
                 with self.lock:
                     self.exceptions.append(exc)
-            with Data.lock:
+            with self.input_lock:
                 if len(self.pool) == 1 and any((reader.is_alive() for reader in self.readers)) and not len(self.exceptions):
                     #print(self.proc_idx, 'closed but reader still running, continuing anyway')
                     continue
