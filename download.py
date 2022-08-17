@@ -72,7 +72,7 @@ class Stream:
                         #print('yielding', index)
                         for channel_name, channel_data in index.items():
                             if type(channel_data) is dict and 'ditem' in channel_data:
-                                print('yielding', channel_name, '@', stream_output_offset)
+                                sys.stderr.write(f'yielding {channel_name} @ {stream_output_offset}\n')
                                 if stream_output_offset == 565248:
                                     import pdb; pdb.set_trace()
                                 self.channels.add(channel_name)
@@ -95,8 +95,8 @@ class Stream:
                 index_offset_in_stream += index_subsize
             else:
                 #print('popping')
-                indices.pop()
                 assert stream_output_offset == expected_stream_output_offset
+                indices.pop()
         assert stream_output_offset == total_size
         assert index_offset_in_stream == total_size
     def fetch_block(self, block):
@@ -201,7 +201,7 @@ class Stream:
 
 for fn in sys.argv[1:]:
     with open(fn) as fh:
-        stream = Stream(json.load(fh), Peer())
+        stream = Stream(json.load(fh), Peer())#'http://gateway-4.arweave.net:1984'))
     for metadata, channel_name, header, stream, length in stream.iterate():
         sys.stderr.write('channel data: ' + channel_name + ': ' + str(length)+'\n')#repr(stream.read(length))+'\n')
         if channel_name == 'capture':
