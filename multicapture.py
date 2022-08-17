@@ -84,7 +84,7 @@ class BinaryProcessStream(threading.Thread):
         capture = capture_proc.stdout
         raws = []
         while running:
-            raw = capture.read1(100000)# if not self.constant_output else capture.read(100000)
+            raw = capture.read1(100000) if not self.constant_output else capture.read(100000)
             raws.append(raw)
             if Data.lock.acquire(blocking=False):
                 Data.extend_needs_lk(self.name, raws)
@@ -280,7 +280,7 @@ class Storer(threading.Thread):
         self.pending_output = deque()
         self.start()
     def print(self, *params):
-        #return
+        return
         log = self.logs[self.proc_idx]
         if not len(log) or log[-1] != params:
             self.logs[self.proc_idx].append(params)
