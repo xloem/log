@@ -188,7 +188,7 @@ class Stream:
                                 stream.read(start - stream.tell())
                             return ANS104DataItemHeader.fromstream(stream), stream, end - stream.tell()
                         else:
-                            stream.__exit__(None, None)
+                            stream.__exit__(None, None, None)
                 raise KeyError(dict(dataitem=id, preceding_block=preceding_block))
             except KeyError:
                 logger.exception(f'{id} not found on chain (yet?), waiting 60 seconds to look again [better: look back and forward for other parts of stream as earlier code did]')
