@@ -84,7 +84,7 @@ class BinaryProcessStream(threading.Thread):
         capture = capture_proc.stdout
         raws = []
         while running:
-            raw = capture.read1(100000) if not self.constant_output else capture.read(100000)
+            raw = capture.read1(100000)# if not self.constant_output else capture.read(100000)
             raws.append(raw)
             if Data.lock.acquire(blocking=False):
                 Data.extend_needs_lk(self.name, raws)
@@ -127,7 +127,7 @@ class Locationer(threading.Thread):
             raw = json.load(location_proc.stdout)
             raws.append(raw)
             if Data.lock.acquire(blocking=False):
-                Data.append_needs_lk('location', raws)
+                Data.extend_needs_lk('location', raws)
                 Data.lock.release()
                 raws.clear()
         print('Locationing finished')
