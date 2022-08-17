@@ -73,8 +73,6 @@ class Stream:
                         for channel_name, channel_data in index.items():
                             if type(channel_data) is dict and 'ditem' in channel_data:
                                 sys.stderr.write(f'yielding {channel_name} @ {stream_output_offset}\n')
-                                if stream_output_offset == 565248:
-                                    import pdb; pdb.set_trace()
                                 self.channels.add(channel_name)
                                 length_sum = 0
                                 for ditem in channel_data['ditem']:
