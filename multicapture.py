@@ -365,6 +365,7 @@ prev = None
 peer = Peer(retries=9999999)
 offset = 0
 indices = flat_tree(3) #append_indices(3)
+prev_indices_snap = indices.snap()
 #index_values = indices
 
 current_block = peer.current_block()
@@ -422,10 +423,11 @@ while True:
         )
         indices_snap = indices.snap()
         try:
-            result = send(json.dumps(indices.snap()).encode())
+            result = send(json.dumps(indices_snap).encode())
         except:
-            indices = flat_tree(3, indices_snap)
+            indices = flat_tree(3, prev_indices_snap)
             raise
+        prev_indices_snap = indices_snap
         prev = dict(
             ditem = [result['id']],
             min_block = (current_block['height'], current_block['indep_hash']),
