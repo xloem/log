@@ -6,6 +6,7 @@
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <unistd.h>
 
 void data_callback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount)
 {
@@ -54,7 +55,7 @@ int main(int argc, char** argv)
 
     //printf("Press Enter to stop recording...\n");
     //getchar();
-    while("recording");
+    while("recording") sleep(1);
     
     ma_device_uninit(&device);
     ma_encoder_uninit(&encoder);
