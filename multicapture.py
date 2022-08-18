@@ -21,7 +21,7 @@ except:
     print('Generating an identity ...')
     wallet = Wallet.generate(jwk_file='identity.json')
 
-node = Node(timeout = 1)
+node = Node(timeout = 0.25)
 def send(data, **tags):
     di = DataItem(data = data)
     di.header.tags = [
@@ -37,8 +37,9 @@ def send(data, **tags):
             text, code, exc2, response = exc.args
             if code == 201: # already received
                 return {'id': di.header.id}
-            #pass
-            logger.exception(text)
+            elif code != 598: # not read timeout
+                #pass
+                logger.exception(text)
     return result
 
 running = True
@@ -46,25 +47,12 @@ running = True
 class Data:
     data = deque()
     lock = threading.Lock()
+    condition = threading.Condition(lock)
     @classmethod
     def append_needs_lk(cls, type, item):
-        #if len(cls.data):
-        #    entry = cls.data[-1].get(type)
-        #    if entry is None:
-        #        cls.data[-1][type] = [item]
-        #    else:
-        #        entry.append(item)
-        #else:
-        #    cls.data.append(dict(type=[item]))
         cls.data.append((type, item))
     @classmethod
     def extend_needs_lk(cls, type, items):
-        #if len(cls.data):
-        #    entry = cls.data[-1].setdefault(type, items)
-        #    if entry is not items:
-        #        entry.extend(items)
-        #else:
-        #    cls.data.append(dict(type=items))
         cls.data.extend(((type, item) for item in items))
 
 class BinaryProcessStream(threading.Thread):
@@ -88,6 +76,7 @@ class BinaryProcessStream(threading.Thread):
             raws.append(raw)
             if Data.lock.acquire(blocking=False):
                 Data.extend_needs_lk(self.name, raws)
+                Data.condition.notify()
                 Data.lock.release()
                 raws.clear()
                 #print(len(Data.data), 'queued while running from', self.name)
@@ -102,8 +91,9 @@ class BinaryProcessStream(threading.Thread):
             if len(raws):
                 with Data.lock:
                     Data.extend_needs_lk(self.name, raws)
-                    raws.clear()
-                    print(f'Finishing {self.name}', len(Data.data))
+                    Data.condition.notify()
+                raws.clear()
+                print(f'Finishing {self.name}', len(Data.data))
                     #if len(Data.data[-1]) < 100000:
                     #    break
             elif capture_proc.poll() is not None:
@@ -128,6 +118,7 @@ class Locationer(threading.Thread):
             raws.append(raw)
             if Data.lock.acquire(blocking=False):
                 Data.extend_needs_lk('location', raws)
+                Data.condition.notify()
                 Data.lock.release()
                 raws.clear()
         print('Locationing finished')
@@ -188,6 +179,7 @@ class PathWatcher(threading.Thread, watchdog.events.FileSystemEventHandler):
             for out_chunk in self.chunker.compress(in_chunk):
                 with Data.lock:
                     Data.append_needs_lk(self.path, out_chunk)
+                    Data.condition.notify()
         end = self.cur_file.tell() - start
         if end > start:
             self.just_closed = False
@@ -200,6 +192,7 @@ class PathWatcher(threading.Thread, watchdog.events.FileSystemEventHandler):
             for out_chunk in self.chunker.finish():
                 with Data.lock:
                     Data.append_needs_lk(self.path, out_chunk)
+                    Data.condition.notify()
             self.chunker = None
     def on_created(self, event):
         #print('on_created', event.src_path)
@@ -257,6 +250,7 @@ class PathWatcher(threading.Thread, watchdog.events.FileSystemEventHandler):
 class Storer(threading.Thread):
     input_lock = threading.Lock()
     lock = threading.Lock()
+    condition = threading.Condition(lock)
     idx = 0
     output_idx = 0
     proc_idx = 0
@@ -317,6 +311,7 @@ class Storer(threading.Thread):
                         self.output[next_type].append(next_result)
                         self.print(self.proc_idx, 'stored', Storer.output_idx, 'index queue size =', len(self.output))
                         Storer.output_idx += 1
+                        self.condition.notify()
                 if len(self.pending_output) and self.pending_output[0][0] != self.output_idx:
                     self.print(self.pending_output[0][0], 'not queuing, waiting for', self.output_idx)
                     #print(self.logs)
@@ -353,6 +348,8 @@ class Storer(threading.Thread):
             with self.input_lock:
                 if len(self.pool) == 1 and any((reader.is_alive() for reader in self.readers)) and not len(self.exceptions):
                     #print(self.proc_idx, 'closed but reader still running, continuing anyway')
+                    with Data.lock:
+                        Data.condition.wait()
                     continue
                 self.pool.remove(self)
                 self.print('storers remaining:', *(storer.proc_idx for storer in self.pool))
@@ -388,12 +385,8 @@ while True:
                     if not running and not len(Storer.pool) and not any((reader.is_alive() for reader in Storer.readers)):
                         print('index thread stopping no output left')
                         break
-                    try:
-                        Storer.lock.release()
-                        #print('no output to index')
-                        time.sleep(0.1)
-                    finally:
-                        Storer.lock.acquire()
+                    print('no output to index')
+                    Storer.condition.wait()
                     data = None
                     continue
                 print('indexing', len(data.get('capture', [])), 'captures, releasing Storer lock')
