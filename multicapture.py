@@ -30,6 +30,7 @@ def send(data, **tags):
     ]
     di.sign(wallet.rsa)
     while True:
+        #print('send loop')
         try:
             result = node.send_tx(di.tobytes())
             break
@@ -43,6 +44,8 @@ def send(data, **tags):
     return result
 
 running = True
+running_lock = threading.Lock()
+running_condition = threading.Condition(running_lock)
 
 class Data:
     data = deque()
@@ -72,6 +75,7 @@ class BinaryProcessStream(threading.Thread):
         capture = capture_proc.stdout
         raws = []
         while running:
+            #print(f'{self.name} read loop')
             raw = capture.read1(100000) if not self.constant_output else capture.read(100000)
             raws.append(raw)
             if Data.lock.acquire(blocking=False):
@@ -83,6 +87,7 @@ class BinaryProcessStream(threading.Thread):
         print(f'Finishing {self.name}ing')
         capture_proc.terminate()
         while True:
+            #print(f'{self.name} read loop')
             #print(f'{self.name}: reading 1')
             raw = capture.read(100000)
             #print(f'{self.name} read: {len(raw)} len(raws)={len(raws)} proc.poll={capture_proc.poll()}')
@@ -109,6 +114,7 @@ class Locationer(threading.Thread):
         raws = []
         last = None
         while running:
+            #print(f('location loop'))
             try:
                 location_proc = Popen('termux-location', stdout=PIPE)
             except:
@@ -146,7 +152,9 @@ class PathWatcher(threading.Thread, watchdog.events.FileSystemEventHandler):
             return
         try:
             while running:
-                time.sleep(0.1)
+                #print(f'{self.path} running wait loop')
+                with running_lock:
+                    running_condition.wait()
         finally:
             self.observer.stop()
             self.observer.join()
@@ -173,6 +181,7 @@ class PathWatcher(threading.Thread, watchdog.events.FileSystemEventHandler):
         assert event is None or self.cur_filename == event.src_path
         start = self.cur_file.tell()
         while True:
+            #print(f'{self.path} {self.cur_filename} continue file loop')
             in_chunk = self.cur_file.read()
             if not in_chunk:
                 break
@@ -289,8 +298,10 @@ class Storer(threading.Thread):
         last_log_time = 0
         last_log_time_2 = 0
         while True:
+            #print(f'{self.proc_idx} loop')
             try:
                 while len(self.pending_input):
+                    #print(f'{self.proc_idx} pending input loop')
                     next_idx, next_type, next_data = self.pending_input[0]
                     self.print(self.proc_idx, 'sending', next_idx)
                     if type(data) is bytes:
@@ -304,6 +315,7 @@ class Storer(threading.Thread):
                     self.pending_output.append((next_idx, next_type, result))
                     self.pending_input.popleft()
                 while len(self.pending_output) and self.pending_output[0][0] == self.output_idx:
+                    #print(f'{self.proc_idx} pending output loop')
                     next_idx, next_type, next_result = self.pending_output.popleft()
                     self.print(self.proc_idx, 'taking storing lock with the next item')
                     with self.lock:
@@ -372,6 +384,7 @@ prev = None
 
 data = None
 while True:
+    #print('indexing loop')
     try:
         #print('taking Storer lock')
         if data is None:
@@ -445,3 +458,5 @@ while True:
         if not running:
             break
         running = False
+        with running_lock:
+            running_condition.notify_all()
