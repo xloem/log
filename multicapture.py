@@ -30,7 +30,7 @@ def send(data, **tags):
     ]
     di.sign(wallet.rsa)
     while True:
-        #print('send loop')
+        print('send loop')
         try:
             result = node.send_tx(di.tobytes())
             break
@@ -41,6 +41,8 @@ def send(data, **tags):
             elif code != 598: # not read timeout
                 #pass
                 logger.exception(text)
+            else: # read timeout
+                print('send timeout, retry')
     return result
 
 running = True
@@ -349,12 +351,13 @@ class Storer(threading.Thread):
                 while len(self.pending_input):
                     #print(f'{self.proc_idx} pending input loop')
                     next_idx, next_type, next_data = self.pending_input[0]
-                    self.print(self.proc_idx, 'sending', next_idx)
-                    if type(data) is bytes:
+                    if type(next_data) is bytes:
+                        self.print(self.proc_idx, 'sending', next_idx)
                         result = send(next_data)
-                        #print(self.proc_idx, 'sent', idx)
+                        print(self.proc_idx, 'sent', idx)
                         result['length'] = len(next_data)
-                    elif type(data) is dict:
+                    elif type(next_data) is dict:
+                        self.print(self.proc_idx, 'is dict')
                         result = dict(id = next_data)
                     else:
                         raise AssertionError(f'unexpected content datatype {type(data)}: {channel}, {data}')
@@ -444,7 +447,7 @@ while True:
                     if not running and not len(Storer.pool) and not any((reader.is_alive() for reader in Storer.readers)):
                         print('index thread stopping no output left')
                         break
-                    print('no output to index')
+                    print('no output to index, len(Storer.pool) =', len(Storer.pool), 'alive readers =', *(reader.is_alive() for reader in Storer.readers))
                     Storer.condition.wait()
                     data = None
                     continue
