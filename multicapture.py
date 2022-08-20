@@ -142,26 +142,32 @@ class FFMPEGer(BinaryProcessStream):
         return [
             *(
                 ('-vaapi_device', accel_device, '-vf', 'format=nv12,hwupload', '-codec:v', 'hevc_vaapi') # this worked for me on an nvidia machine
-                for accel_device in cls.accel_devices
+                for accel_device in cls.accel_devices()
             ),
             ('-codec:v', 'libx265') # this one may not work
         ]
     @staticmethod
     def video_devices():
-        def_dir = '/dev'
-        return [
-            os.path.join(dev_dir, dev)
-            for dev in os.listdir(dev_dir)
-            if dev.startswith('video')
-        ]
+        dev_dir = '/dev'
+        try:
+            return [
+                os.path.join(dev_dir, dev)
+                for dev in os.listdir(dev_dir)
+                if dev.startswith('video')
+            ]
+        except PermissionError as exc:
+            return []
     @staticmethod
     def accel_devices():
         dev_dir = os.path.join('/dev','dri')
-        return [
-            os.path.join(dev_dir, dev)
-            for dev in os.listdir(dev_dir)
-            if dev.startswith('render')
-        ]
+        try:
+            return [
+                os.path.join(dev_dir, dev)
+                for dev in os.listdir(dev_dir)
+                if dev.startswith('render')
+            ]
+        except PermissionError as exc:
+            return []
 
 class PathWatcher(threading.Thread, watchdog.events.FileSystemEventHandler):
     def __init__(self, path, *params, **kwparams):
@@ -477,7 +483,7 @@ while True:
         prev = dict(
             ditem = [result['id']],
             min_block = (current_block['height'], current_block['indep_hash']),
-            api_block = result['block']
+            api_block = result['block'] if 'block' in result else None
         )
         data = None
         if first is None:
