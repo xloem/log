@@ -21,7 +21,7 @@ except:
     print('Generating an identity ...')
     wallet = Wallet.generate(jwk_file='identity.json')
 
-node = Node(timeout = 0.25)
+node = Node(timeout = 0.5) # 0.25 i was getting timeout loops on domestic wifi
 def send(data, **tags):
     di = DataItem(data = data)
     di.header.tags = [
@@ -118,15 +118,15 @@ class Locationer(threading.Thread):
         while running:
             #print(f('location loop'))
             try:
-                location_proc = Popen('termux-location', stdout=PIPE, stderr=PIPE)
+                location_proc = Popen('termux-location', text=True, stdout=PIPE, stderr=PIPE)
             except:
                 print('Locationing failed.')
                 break
-            raw = location_proc.stdout.read()
+            stdout, stderr = location_proc.communicate()
             try:
-                raw = json.loads(raw)
+                raw = json.loads(stdout)
             except json.JSONDecodeError:
-                raw = {'stdout': raw, 'stderr': location_proc.stderr.read(), 'returncode': location_proc.returncode}
+                raw = {'stdout': stdout, 'stderr': stderr, 'returncode': location_proc.returncode}
             raws.append(raw)
             if Data.lock.acquire(blocking=False):
                 Data.extend_needs_lk('location', raws)
