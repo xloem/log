@@ -129,6 +129,15 @@ class Locationer(threading.Thread):
                 raws.clear()
         print('Locationing finished')
 
+class FFMPEGer(BinaryProcessStream):
+    def __init__(self, device, v_codec = 'hevc', container = 'matroska', vaapi_device = None):
+        args = ['ffmpeg', 'v4l2', '-i', device, '-f', container, '-v', warning]
+        if vaapi_device:
+            args.extend(('-vaapi_device', vaapi_device))
+            codec += '_vaapi'
+        args.extend(('-codec:v', codec, '-'))
+        super().__init__('ffmpeg ' + device, args, constant_output = True)
+
 class PathWatcher(threading.Thread, watchdog.events.FileSystemEventHandler):
     def __init__(self, path, *params, **kwparams):
         super().__init__(*params, **kwparams)
