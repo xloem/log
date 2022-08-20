@@ -30,7 +30,7 @@ def send(data, **tags):
     ]
     di.sign(wallet.rsa)
     while True:
-        print('send loop')
+        #print('send loop')
         try:
             result = node.send_tx(di.tobytes())
             break
@@ -331,7 +331,7 @@ class Storer(threading.Thread):
         self.pending_output = deque()
         self.start()
     def print(self, *params):
-        #return
+        return
         log = self.logs[self.proc_idx]
         if not len(log) or log[-1] != params:
             self.logs[self.proc_idx].append(params)
@@ -354,7 +354,7 @@ class Storer(threading.Thread):
                     if type(next_data) is bytes:
                         self.print(self.proc_idx, 'sending', next_idx)
                         result = send(next_data)
-                        print(self.proc_idx, 'sent', idx)
+                        self.print(self.proc_idx, 'sent', idx)
                         result['length'] = len(next_data)
                     elif type(next_data) is dict:
                         self.print(self.proc_idx, 'is dict')
