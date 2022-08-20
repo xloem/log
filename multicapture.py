@@ -133,6 +133,36 @@ class Locationer(threading.Thread):
                 raws.clear()
         print('Locationing finished')
 
+class FFMPEGer(BinaryProcessStream):
+    def __init__(self, device, codec = None, container = 'matroska'):
+        args = ['ffmpeg', '-v', 'warning', '-f', 'v4l2', '-i', device, *codec, '-f', container]
+        super().__init__('ffmpeg ' + device, args, constant_output = True)
+    @classmethod
+    def default_codecs(cls):
+        return [
+            *(
+                ('-vaapi_device', accel_device, '-vf', 'format=nv12,hwupload', '-codec:v', 'hevc_vaapi') # this worked for me on an nvidia machine
+                for accel_device in cls.accel_devices
+            ),
+            ('-codec:v', 'libx265') # this one may not work
+        ]
+    @staticmethod
+    def video_devices():
+        def_dir = '/dev'
+        return [
+            os.path.join(dev_dir, dev)
+            for dev in os.listdir(dev_dir)
+            if dev.startswith('video')
+        ]
+    @staticmethod
+    def accel_devices():
+        dev_dir = os.path.join('/dev','dri')
+        return [
+            os.path.join(dev_dir, dev)
+            for dev in os.listdir(dev_dir)
+            if dev.startswith('render')
+        ]
+
 class PathWatcher(threading.Thread, watchdog.events.FileSystemEventHandler):
     def __init__(self, path, *params, **kwparams):
         super().__init__(*params, **kwparams)
@@ -275,6 +305,12 @@ class Storer(threading.Thread):
         Locationer(),
         BinaryProcessStream('logcat', 'logcat', constant_output = True),
         BinaryProcessStream('journalctl', ('journalctl', '--follow')),
+        *[
+            # ffmpeg -f v4l2 -i /dev/video1 -vaapi_device /dev/dri/renderD128 -vf 'format=nv12,hwupload' -codec:v hevc_vaapi -f matroska -v warning -
+            FFMPEGer(device, codec)
+            for device, codec in zip(FFMPEGer.video_devices(), FFMPEGer.default_codecs())
+        ]
+
         #PathWatcher(os.path.abspath('.')),
         #PathWatcher('/sdcard/Download'),
     ]
