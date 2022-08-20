@@ -116,11 +116,15 @@ class Locationer(threading.Thread):
         while running:
             #print(f('location loop'))
             try:
-                location_proc = Popen('termux-location', stdout=PIPE)
+                location_proc = Popen('termux-location', stdout=PIPE, stderr=PIPE)
             except:
                 print('Locationing failed.')
                 break
-            raw = json.load(location_proc.stdout)
+            raw = location_proc.stdout.read()
+            try:
+                raw = json.loads(raw)
+            except json.JSONDecodeError:
+                raw = {'stdout': raw, 'stderr': location_proc.stderr.read(), 'returncode': location_proc.returncode}
             raws.append(raw)
             if Data.lock.acquire(blocking=False):
                 Data.extend_needs_lk('location', raws)
@@ -283,7 +287,7 @@ class Storer(threading.Thread):
         self.pending_output = deque()
         self.start()
     def print(self, *params):
-        return
+        #return
         log = self.logs[self.proc_idx]
         if not len(log) or log[-1] != params:
             self.logs[self.proc_idx].append(params)
