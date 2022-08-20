@@ -271,6 +271,9 @@ class Storer(threading.Thread):
         Locationer(),
         BinaryProcessStream('logcat', 'logcat', constant_output = True),
         BinaryProcessStream('journalctl', ('journalctl', '--follow')),
+
+        # ffmpeg -f v4l2 -i /dev/video1 -vaapi_device /dev/dri/renderD128 -vf 'format=nv12,hwupload' -codec:v hevc_vaapi -f matroska -v warning -
+
         #PathWatcher(os.path.abspath('.')),
         #PathWatcher('/sdcard/Download'),
     ]
