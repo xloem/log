@@ -404,8 +404,11 @@ while True:
                     continue
                 print('indexing', len(data.get('capture', [])), 'captures, releasing Storer lock')
             if time.time() > last_time + 60:
-                current_block = peer.current_block()
-                last_time = time.time()
+                try:
+                    current_block = peer.current_block()
+                    last_time = time.time()
+                except Exception as e:
+                    logger.exception(e)
         else:
             pass
             #print('data left over')
