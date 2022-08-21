@@ -26,6 +26,8 @@ class Stream:
             self.tail = metadata
         elif 'ditem' in metadata:
             self.tail = sum((self.dataitem_json(ditem, metadata['min_block']) for ditem in metadata['ditem']), start=[])
+        else:
+            raise AssertionError('unexpected metadata structure', metadata)
     def __len__(self):
         return sum((size for leaf_count, data, start, size in self.tail))
     def iterate(self):
@@ -76,9 +78,12 @@ class Stream:
                                 self.channels.add(channel_name)
                                 length_sum = 0
                                 for ditem in channel_data['ditem']:
-                                    assert ditem not in visited
-                                    visited[ditem] = indices.copy()
-                                    header, stream, length = self.dataitem(ditem, index['min_block'])
+                                    if type(ditem) is not dict:
+                                        assert ditem not in visited
+                                        visited[ditem] = indices.copy()
+                                        header, stream, length = self.dataitem(ditem, index['min_block'])
+                                    else:
+                                        header, stream, length = (None, ditem, 1)
                                     length_sum += length
                                     #assert length > 0
                                     yield index, channel_name, header, stream, length

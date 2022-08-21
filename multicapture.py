@@ -21,7 +21,7 @@ except:
     print('Generating an identity ...')
     wallet = Wallet.generate(jwk_file='identity.json')
 
-node = Node(timeout = 0.25)
+node = Node(timeout = 0.5) # 0.25 i was getting timeout loops on domestic wifi
 def send(data, **tags):
     di = DataItem(data = data)
     di.header.tags = [
@@ -41,6 +41,8 @@ def send(data, **tags):
             elif code != 598: # not read timeout
                 #pass
                 logger.exception(text)
+            else: # read timeout
+                print('send timeout, retry')
     return result
 
 running = True
@@ -116,11 +118,15 @@ class Locationer(threading.Thread):
         while running:
             #print(f('location loop'))
             try:
-                location_proc = Popen('termux-location', stdout=PIPE)
+                location_proc = Popen('termux-location', text=True, stdout=PIPE, stderr=PIPE)
             except:
                 print('Locationing failed.')
                 break
-            raw = json.load(location_proc.stdout)
+            stdout, stderr = location_proc.communicate()
+            try:
+                raw = json.loads(stdout)
+            except json.JSONDecodeError:
+                raw = {'stdout': stdout, 'stderr': stderr, 'returncode': location_proc.returncode}
             raws.append(raw)
             if Data.lock.acquire(blocking=False):
                 Data.extend_needs_lk('location', raws)
@@ -128,6 +134,42 @@ class Locationer(threading.Thread):
                 Data.lock.release()
                 raws.clear()
         print('Locationing finished')
+
+class FFMPEGer(BinaryProcessStream):
+    def __init__(self, device, codec = None, container = 'matroska'):
+        args = ['ffmpeg', '-v', 'warning', '-f', 'v4l2', '-i', device, *codec, '-f', container]
+        super().__init__('ffmpeg ' + device, args, constant_output = True)
+    @classmethod
+    def default_codecs(cls):
+        return [
+            *(
+                ('-vaapi_device', accel_device, '-vf', 'format=nv12,hwupload', '-codec:v', 'hevc_vaapi') # this worked for me on an nvidia machine
+                for accel_device in cls.accel_devices()
+            ),
+            ('-codec:v', 'libx265') # this one may not work
+        ]
+    @staticmethod
+    def video_devices():
+        dev_dir = '/dev'
+        try:
+            return [
+                os.path.join(dev_dir, dev)
+                for dev in os.listdir(dev_dir)
+                if dev.startswith('video')
+            ]
+        except PermissionError as exc:
+            return []
+    @staticmethod
+    def accel_devices():
+        dev_dir = os.path.join('/dev','dri')
+        try:
+            return [
+                os.path.join(dev_dir, dev)
+                for dev in os.listdir(dev_dir)
+                if dev.startswith('render')
+            ]
+        except PermissionError as exc:
+            return []
 
 class PathWatcher(threading.Thread, watchdog.events.FileSystemEventHandler):
     def __init__(self, path, *params, **kwparams):
@@ -271,6 +313,12 @@ class Storer(threading.Thread):
         Locationer(),
         BinaryProcessStream('logcat', 'logcat', constant_output = True),
         BinaryProcessStream('journalctl', ('journalctl', '--follow')),
+        *[
+            # ffmpeg -f v4l2 -i /dev/video1 -vaapi_device /dev/dri/renderD128 -vf 'format=nv12,hwupload' -codec:v hevc_vaapi -f matroska -v warning -
+            FFMPEGer(device, codec)
+            for device, codec in zip(FFMPEGer.video_devices(), FFMPEGer.default_codecs())
+        ]
+
         #PathWatcher(os.path.abspath('.')),
         #PathWatcher('/sdcard/Download'),
     ]
@@ -303,12 +351,13 @@ class Storer(threading.Thread):
                 while len(self.pending_input):
                     #print(f'{self.proc_idx} pending input loop')
                     next_idx, next_type, next_data = self.pending_input[0]
-                    self.print(self.proc_idx, 'sending', next_idx)
-                    if type(data) is bytes:
+                    if type(next_data) is bytes:
+                        self.print(self.proc_idx, 'sending', next_idx)
                         result = send(next_data)
-                        #print(self.proc_idx, 'sent', idx)
+                        self.print(self.proc_idx, 'sent', idx)
                         result['length'] = len(next_data)
-                    elif type(data) is dict:
+                    elif type(next_data) is dict:
+                        self.print(self.proc_idx, 'is dict')
                         result = dict(id = next_data)
                     else:
                         raise AssertionError(f'unexpected content datatype {type(data)}: {channel}, {data}')
@@ -398,7 +447,7 @@ while True:
                     if not running and not len(Storer.pool) and not any((reader.is_alive() for reader in Storer.readers)):
                         print('index thread stopping no output left')
                         break
-                    print('no output to index')
+                    print('no output to index, len(Storer.pool) =', len(Storer.pool), 'alive readers =', *(reader.is_alive() for reader in Storer.readers))
                     Storer.condition.wait()
                     data = None
                     continue
@@ -440,7 +489,7 @@ while True:
         prev = dict(
             ditem = [result['id']],
             min_block = (current_block['height'], current_block['indep_hash']),
-            api_block = result['block']
+            api_block = result['block'] if 'block' in result else None
         )
         data = None
         if first is None:
