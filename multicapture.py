@@ -309,7 +309,8 @@ class Storer(threading.Thread):
     output = defaultdict(deque)
     #reader = BinaryProcessStream('capture', './capture')
     readers = [
-        BinaryProcessStream('capture', ('sh','-c','./capture | tee last_capture.log.bin'), constant_output = True),
+        #BinaryProcessStream('capture', ('sh','-c','./capture | tee last_capture.log.bin'), constant_output = True),
+        BinaryProcessStream('capture', ('sh','-c','./capture'), constant_output = True),
         Locationer(),
         BinaryProcessStream('logcat', 'logcat', constant_output = True),
         BinaryProcessStream('journalctl', ('journalctl', '--follow')),
