@@ -137,7 +137,7 @@ class Locationer(threading.Thread):
 
 class FFMPEGer(BinaryProcessStream):
     def __init__(self, device, codec = None, container = 'matroska'):
-        args = ['ffmpeg', '-v', 'warning', '-f', 'v4l2', '-i', device, *codec, '-f', container]
+        args = ['ffmpeg', '-v', 'warning', *device, *codec, '-f', container]
         super().__init__('ffmpeg ' + device, args, constant_output = True)
     @classmethod
     def default_codecs(cls):
@@ -151,14 +151,18 @@ class FFMPEGer(BinaryProcessStream):
     @staticmethod
     def video_devices():
         dev_dir = '/dev'
+        devs = []
         try:
-            return [
-                os.path.join(dev_dir, dev)
+            devs.extend((
+                ('-f', 'v4l2', '-i', os.path.join(dev_dir, dev))
                 for dev in os.listdir(dev_dir)
                 if dev.startswith('video')
-            ]
+            ))
         except PermissionError as exc:
-            return []
+            pass
+        if 'DISPLAY' in os.environ:
+            devs.append(('-f', 'x11grab', '-i', os.environ['DISPLAY']))
+        return devs
     @staticmethod
     def accel_devices():
         dev_dir = os.path.join('/dev','dri')
@@ -309,7 +313,8 @@ class Storer(threading.Thread):
     output = defaultdict(deque)
     #reader = BinaryProcessStream('capture', './capture')
     readers = [
-        BinaryProcessStream('capture', ('sh','-c','./capture | tee last_capture.log.bin'), constant_output = True),
+        #BinaryProcessStream('capture', ('sh','-c','./capture | tee last_capture.log.bin'), constant_output = True),
+        BinaryProcessStream('capture', ('sh','-c','./capture'), constant_output = True),
         Locationer(),
         BinaryProcessStream('logcat', 'logcat', constant_output = True),
         BinaryProcessStream('journalctl', ('journalctl', '--follow')),
