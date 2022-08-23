@@ -1,29 +1,20 @@
-import kivy
-kivy.require('1.0.9')
-from kivy.lang import Builder
-from kivy.uix.gridlayout import GridLayout
-from kivy.properties import NumericProperty
+
 from kivy.app import App
 
-Builder.load_string('''
-<HelloWorldScreen>:
-    cols: 1
-    Label:
-        text: 'Welcome to the Hello world'
-    Button:
-        text: 'Click me! %d' % root.counter
-        on_release: root.my_callback()
-''')
+from kivy.uix.scatter import Scatter
+from kivy.uix.label import Label
+from kivy.uix.floatlayout import FloatLayout
 
-class HelloWorldScreen(GridLayout):
-    counter = NumericProperty(0)
-    def my_callback(self):
-        print 'The button has been pushed'
-        self.counter += 1
-
-class HelloWorldApp(App):
+class TutorialApp(App):
     def build(self):
-        return HelloWorldScreen()
+        f = FloatLayout()
+        s = Scatter()
+        l = Label(text="Hello!",
+                  font_size=150)
 
-if __name__ == '__main__':
-    HelloWorldApp().run()
+        f.add_widget(s)
+        s.add_widget(l)
+        return f
+
+if __name__ == "__main__":
+    TutorialApp().run()
