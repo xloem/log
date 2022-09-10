@@ -138,7 +138,7 @@ class Locationer(threading.Thread):
 class FFMPEGer(BinaryProcessStream):
     def __init__(self, device, codec = None, container = 'matroska'):
         args = ['ffmpeg', '-v', 'warning', *device, *codec, '-f', container]
-        super().__init__('ffmpeg ' + device, args, constant_output = True)
+        super().__init__('ffmpeg ' + ' '.join(device), args, constant_output = True)
     @classmethod
     def default_codecs(cls):
         return [
@@ -171,7 +171,7 @@ class FFMPEGer(BinaryProcessStream):
                 os.path.join(dev_dir, dev)
                 for dev in os.listdir(dev_dir)
                 if dev.startswith('render')
-            ]
+            ] if os.path.exists(dev_dir) else []
         except PermissionError as exc:
             return []
 
