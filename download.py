@@ -117,7 +117,7 @@ class Stream:
                 tags = Transaction.frombytes(self.peer.unconfirmed_tx2(txid)).tags
             else:
                 tags = self.peer.tx_tags(txid)
-            if any((ar.utils.b64dec_if_not_bytes(tag['name']).startswith(b'Bundle') for tag in tags)):
+            if any((ar.utils.b64dec_if_not_bytes(tag['name']) in (b'Bundle-Format', b'Bundle-Version') for tag in tags)):
                 bundles.append(txid)
         return bundles
     def _cache_block(self, block):
