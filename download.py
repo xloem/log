@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import datetime
 import itertools, logging, sys, time
 import json
 from flat_tree import flat_tree
@@ -77,7 +78,11 @@ class Stream:
                                 sys.stderr.write(f'yielding {channel_name} @ {stream_output_offset}\n')
                                 self.channels.add(channel_name)
                                 length_sum = 0
-                                for ditem in channel_data['ditem']:
+                                if 'time' in channel_data:
+                                    times = channel_data['time']
+                                else:
+                                    times = [None for ditem in channel_data['ditem']]
+                                for time, ditem in zip(times, channel_data['ditem']):
                                     if type(ditem) is not dict:
                                         assert ditem not in visited
                                         visited[ditem] = indices.copy()
@@ -86,7 +91,7 @@ class Stream:
                                         header, stream, length = (None, ditem, 1)
                                     length_sum += length
                                     #assert length > 0
-                                    yield index, channel_name, header, stream, length
+                                    yield index, channel_name, time, header, stream, length
                                     #print(index_offset_in_stream, stream_output_offset, index['capture']['ditem'])
                                     if channel_name == 'capture':
                                         stream_output_offset += length
@@ -205,8 +210,9 @@ class Stream:
 for fn in sys.argv[1:]:
     with open(fn) as fh:
         stream = Stream(json.load(fh), Peer())#'http://gateway-4.arweave.net:1984'))
-    for metadata, channel_name, header, stream, length in stream.iterate():
-        sys.stderr.write('channel data: ' + channel_name + ': ' + str(length)+'\n')#repr(stream.read(length))+'\n')
+    for metadata, channel_name, time, header, stream, length in stream.iterate():
+        time = datetime.datetime.fromtimestamp(time).isoformat()
+        sys.stderr.write('channel data: ' + channel_name + ': ' + str(length) + ' @ ' + time + '\n')#repr(stream.read(length))+'\n')
         if channel_name == 'capture':
             sys.stdout.buffer.write(stream.read(length))
         #else:

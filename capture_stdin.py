@@ -72,15 +72,15 @@ while reader.is_pumping() and reader.block():
         last_block_time = time.time()
     indices.append(
         prev_indices_id,
-        sum((len(raw) for raw in raws)),
+        sum((len(raw) for timestamp, raw in raws)),
         dict(
             capture = dict(
                 ditem = [data['id'] for data in data_array],
+                time = [last_timestamp, *(timestamp for timestamp, raw in raws[:-1])], # including the _preceding_ timestamp to have a start time
             ),
             min_block = (current_block['height'], current_block['indep_hash']),
             #api_block = data_array[-1]['block'],
             api_timestamp = data_array[-1]['timestamp'],
-            timestamps = [last_timestamp, *(timestamp for timestamp, raw in raws[:-1])], # include the _preceding_ timestamp to have a start time
         ),
     )
     last_timestamp, last_raw = raws[-1]
