@@ -58,7 +58,8 @@ while True:
                 ditem = [data['id']],
             ),
             min_block = (current_block['height'], current_block['indep_hash']),
-            api_block = data['block'],
+            #api_block = data['block'],
+            api_timestamp = data['timestamp'],
         ),
     )
     metadata = indices.snap()#[(type, data, start, size) for type, data, start, size, *_ in indices]
@@ -66,7 +67,8 @@ while True:
     prev_indices_id = dict(
         ditem = [result['id']],
         min_block = (current_block['height'], current_block['indep_hash']),
-        api_block = result['block'],
+        #api_block = result['block'],
+        api_timestamp = result['timestamp'],
     )
     #offset += len(raw)
     if first is None:
