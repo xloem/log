@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
-import sys, time
+import time
+last_post_time = time.time()
+
 from datetime import datetime
 from subprocess import Popen, PIPE
 import json
@@ -23,15 +25,16 @@ print('Capturing ...')
 #capture = Popen("./capture", stdout=PIPE).stdout
 #capture = Popen(('sh','-c','./capture | tee last_capture.log.bin'), stdout=PIPE).stdout
 import sys
-last_timestamp = time.time()
 reader = nonblocking.Reader(
     sys.stdin.buffer,
     max_size=100000,
     lines=False,
     #lines=True,
     max_count=1024, # max number queued
-    drop_timeout=None, # max time to wait adding to queue when full
-    transform_cb=lambda data: (time.time(), data)
+    drop_timeout=0, # max time to wait adding to queue when full (waits forever if None)
+    drop_older=True,
+    pre_cb=lambda: time.time(),
+    post_cb=lambda tuple: (*tuple, time.time()),
 )
 #capture = sys.stdin.buffer
 
@@ -43,7 +46,13 @@ def send(data, **tags):
         for key, val in tags.items()
     ]
     di.sign(wallet.rsa)
-    result = node.send_tx(di.tobytes())
+    while True:
+        try:
+            result = node.send_tx(di.tobytes())
+            break
+        except Exception as exc:
+            print(exc, file=sys.stderr)
+            continue
     return result
 
 first = None
@@ -57,33 +66,47 @@ indices = flat_tree(3) #append_indices(3)
 current_block = peer.current_block()
 last_block_time = time.time()
 
-while reader.is_pumping() and reader.block():
+#dump = open('dump.bin', 'wb')
+while reader.block():
     #raw = capture.read(100000*16)#100000)
     #reader.block()
-    raws = reader.read_many()
+    with reader:
+        dropped_ct, dropped_size = reader.dropped(reset = True)
+        raws = reader.read_many()
+    sys.stderr.write(f'Read {len(raws)} data chunks\n')
+    if dropped_ct:
+        sys.stderr.write(f'Dropped {dropped_size} bytes from {dropped_ct} reads at {last_post_time}\n')
+    sys.stderr.flush()
+    #for start_time, raw, end_time in raws:
+    #    dump.write(raw)
     #if len(raw) == 0:
     #    break
     #data_array = []
     #for offset in range(0,len(raw),100000):
     #    data_array.append(send(raw[offset:offset+100000]))
-    data_array = [send(raw) for timestamp, raw in raws]
+    data_array = [send(raw) for pre_time, raw, post_time in raws]
     if time.time() > last_block_time + 60:
         current_block = peer.current_block()
         last_block_time = time.time()
     indices.append(
         prev_indices_id,
-        sum((len(raw) for timestamp, raw in raws)),
+        sum((len(raw) for pre_time, raw, post_time in raws)),
         dict(
             capture = dict(
                 ditem = [data['id'] for data in data_array],
-                time = [last_timestamp, *(timestamp for timestamp, raw in raws[:-1])], # including the _preceding_ timestamp to have a start time
+                time = [pre_time for pre_time, raw, post_time in raws],
             ),
             min_block = (current_block['height'], current_block['indep_hash']),
             #api_block = data_array[-1]['block'],
             api_timestamp = data_array[-1]['timestamp'],
+            dropped = dict(
+                count = dropped_ct,
+                size = dropped_size,
+                time = last_post_time,
+            ) if dropped_ct else None,
         ),
     )
-    last_timestamp, last_raw = raws[-1]
+    last_pre_time, last_raw, last_post_time = raws[-1]
     metadata = indices.snap()#[(type, data, start, size) for type, data, start, size, *_ in indices]
     result = send(json.dumps(metadata).encode())
     prev_indices_id = dict(
