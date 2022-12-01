@@ -48,8 +48,18 @@ def send(data, **tags):
     di.sign(wallet.rsa)
     while True:
         try:
+            start = time.time()
             result = node.send_tx(di.tobytes())
             break
+        except ar.AreaveNetworkException as exc:
+            message, status_code, cause, response = exc.args
+            if status_code == 201: # transaction already received
+                return dict(
+                    id = di.header.id,
+                    timestamp = f'code 201 (already received) around {start*1000}'
+                )
+            print(exc, file=sys.stderr)
+            continue
         except Exception as exc:
             print(exc, file=sys.stderr)
             continue
