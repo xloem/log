@@ -6,7 +6,7 @@ last_post_time = time.time()
 from datetime import datetime
 from subprocess import Popen, PIPE
 import json
-from ar import Peer, Wallet, DataItem
+from ar import Peer, Wallet, DataItem, ArweaveNetworkException
 from ar.utils import create_tag
 from bundlr import Node
 # indexes a balanced tree of past indices
@@ -51,7 +51,7 @@ def send(data, **tags):
             start = time.time()
             result = node.send_tx(di.tobytes())
             break
-        except ar.AreaveNetworkException as exc:
+        except ArweaveNetworkException as exc:
             message, status_code, cause, response = exc.args
             if status_code == 201: # transaction already received
                 return dict(
