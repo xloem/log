@@ -35,6 +35,7 @@ reader = nonblocking.Reader(
     drop_older=True,
     pre_cb=lambda: time.time(),
     post_cb=lambda tuple: (*tuple, time.time()),
+    verbose=True,
 )
 #capture = sys.stdin.buffer
 
@@ -134,9 +135,12 @@ while reader.block():
     #eta = current_block['timestamp'] + (result['block'] - current_block['height']) * 60 * 2
     #eta = datetime.fromtimestamp(eta)
     #index_values = [value for leaf_count, value in indices]
-    with open(first, 'wt') as fh:
-        #json.dump(index_values[-1], fh)
-        json.dump(prev_indices_id, fh)
+    try:
+        with open(first, 'wt') as fh:
+            #json.dump(index_values[-1], fh)
+            json.dump(prev_indices_id, fh)
+    except Exception as exc:
+        print(exc, file=sys.stderr)
     #json.dump(index_values[-1], sys.stdout)
     json.dump(prev_indices_id, sys.stdout)
     sys.stdout.write('\n')
