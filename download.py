@@ -9,30 +9,42 @@ import ar.utils
 try:
     from tqdm import tqdm
 except:
-    logging.warn('tqdm not found, no progress output')
+    logging.warning('tqdm not found, no progress output')
     def tqdm(iter, *params, **kwparams):
         yield from iter
 
-logging.warn('Note: this script downloads without verifying data integrity. Not that hard to add integrity checks into pyarweave\'s peer stream class.')
+logging.warning('Note: this script downloads without verifying data integrity. Not that hard to add integrity checks into pyarweave\'s peer stream class.')
 
 #logging.basicConfig(level = logging.DEBUG)
 
 class Stream:
-    def __init__(self, metadata, peer):
+    def __init__(self, metadata, peer, follow_owner = True):
         self.peer = peer
         self.channels = set()
         self.height_cache = {}
         self.bundle_cache = {}
         self.cached_bundle = None
+        self.follow_owner = follow_owner
         if type(metadata) is list:
             # full metadata for an ending range
             self.tail = metadata
+            guess_owner_metadata = [item for item in self.tail if item[0] > 0][-1][1] # find endmost non-leaf index
         elif 'ditem' in metadata:
             self.tail = sum((self.dataitem_json(ditem, metadata['min_block']) for ditem in metadata['ditem']), start=[])
+            guess_owner_metadata = metadata
         else:
             raise AssertionError('unexpected metadata structure', metadata)
+        if follow_owner is True:
+            ditem_header, ditem_stream, ditem_size = self.dataitem(guess_owner_metadata['ditem'][-1], guess_owner_metadata['min_block'])
+            self.follow_owner = ditem_header.owner
+            logger.warning(f'following not implemented yet, but guessing owner to follow as {self.follow_owner} !')
+        else:
+            self.follow_owner = follow_owner
     def __len__(self):
+        #self.poll()
         return sum((size for leaf_count, data, start, size in self.tail))
+    #def poll(self):
+    #    if self.follow_owner and peer.height() > 
     def iterate(self):
         # this function is the guts of a class that wraps a tree root record
         # indexing binary data on a blockchain. it is intended to yield the
@@ -119,13 +131,14 @@ class Stream:
         return Block.frombytes(block)
     def _txs2bundles(self, txs, label, unconfirmed=False):
         bundles = []
-        for txid in tqdm(txs, unit='tx', desc=label):
-            if unconfirmed:
-                tags = Transaction.frombytes(self.peer.unconfirmed_tx2(txid)).tags
-            else:
-                tags = self.peer.tx_tags(txid)
-            if any((ar.utils.b64dec_if_not_bytes(tag['name']) in (b'Bundle-Format', b'Bundle-Version') for tag in tags)):
-                bundles.append(txid)
+        with tqdm(txs, unit='tx', desc=label) as items:
+            for txid in items:
+                if unconfirmed:
+                    tags = Transaction.frombytes(self.peer.unconfirmed_tx2(txid)).tags
+                else:
+                    tags = self.peer.tx_tags(txid)
+                if any((ar.utils.b64dec_if_not_bytes(tag['name']) in (b'Bundle-Format', b'Bundle-Version') for tag in tags)):
+                    bundles.append(txid)
         return bundles
     def _cache_block(self, block):
         block = self.fetch_block(block)
@@ -218,6 +231,24 @@ class Stream:
                                 stream.read(start - stream.tell())
                             return ANS104DataItemHeader.fromstream(stream), stream, end - stream.tell()
                         else:
+                            # here is where a new bundle header has been parsed
+                            # if height > current_height, there could be a new tip in the bundle
+                            # UPDATE: this doesn't go here. it would happen when the stream should be extended.
+                            #         i.e., either on user request or on new block found.
+                            #         note that it is only needed when the stream is seeked or its length or tail queried.
+                            # stubbed a self.poll() function for this, could call it at end of iterate()
+                            #if height > current_height and type(self.follow_owner) is str:
+                            #    offset = header.get_len_bytes()
+                            #    for id, length in header.length_by_id.items():
+                            #        stream.seek(offset)
+                            #        candidate = ANS104DataItemHeader.fromstream(stream)
+                            #        if candidate.owner == self.follow_owner:
+                            #            # same owne rin this ditem. migrate tail if contains this tail.
+                            #            # raise warning if doesn't.
+                            #            # check constructor for data format parsing maybe
+                            #            logger.warning('found another ditem with this owner!')
+                            #            break
+                            #        offset += length
                             stream.__exit__(None, None, None)
                             bundles_to_retry.discard(bundle)
                             if height > current_height:
