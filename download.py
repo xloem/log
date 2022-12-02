@@ -13,6 +13,8 @@ except:
     def tqdm(iter, *params, **kwparams):
         yield from iter
 
+logging.warn('Note: this script downloads without verifying data integrity. Not that hard to add integrity checks into pyarweave\'s peer stream class.')
+
 #logging.basicConfig(level = logging.DEBUG)
 
 class Stream:
@@ -132,20 +134,23 @@ class Stream:
         self.height_cache[block.indep_hash] = block.height
         return block.height, bundles
     def block_bundles(self, block):
+        if block is None:
+            pending = self.peer.tx_pending()
+            return self._txs2bundles(pending, f'{len(pending)} pending (central gateway)', unconfirmed = True)
         if type(block) is str:
             block = self.block_height(block)
         bundles = self.bundle_cache.get(block)
         if bundles is None:
-            current_height = self.peer.height()
-            if block > current_height:
-                if block == current_height + 1:
-                    pending = self.peer.tx_pending()
-                    return self._txs2bundles(pending, f'{len(pending)} pending txs', unconfirmed = True)
-                else:
-                    raise KeyError(f'block {block} does not exist yet')
+            #current_height = self.peer.height()
+            #if block > current_height:
+            #     raise KeyError(f'block {block} does not exist yet')
             self._cache_block(block)
             bundles = self.bundle_cache[block]
         return bundles
+    def recache_blocks_from(self, min_height):
+        extra_heights = [height for height in self.bundle_cache if height >= min_height]
+        for height in extra_heights:
+            del self.bundle_cache[height]
     def block_height(self, block):
         if type(block) is list:
             for block in block:
@@ -169,13 +174,26 @@ class Stream:
             except:
                 pass
             try:
+                bundles_to_retry = set()
+                bundles_tried = set()
                 preceding_height = self.block_height(preceding_block)
-                for height in itertools.count(preceding_height + 1): #range(preceding_height + 1, max((data['api_block'] for _, data, *_ in self.tail))) if hasattr(self, 'tail') else itertools.count(preceding_height + 1):
-                    for bundle in self.block_bundles(height):
+                #for height in itertools.count(preceding_height + 1): #range(preceding_height + 1, max((data['api_block'] for _, data, *_ in self.tail))) if hasattr(self, 'tail') else itertools.count(preceding_height + 1):
+                current_height = self.peer.height()
+                height = min(current_height - 1, preceding_height + 1)
+                while True:
+                    for bundle in (*self.block_bundles(height if height <= current_height else None), *bundles_to_retry):
+                        if bundle in bundles_tried:
+                            continue
                         try:
-                            stream = self.peer.stream(bundle)
+                            if height <= current_height:
+                                stream = self.peer.stream(bundle)
+                            else:
+                                assert height == current_height + 1
+                                stream = self.peer.gateway_stream(bundle)
                         except ArweaveException as exc:
-                            logger.exception(f'peer did not provide {bundle}')
+                            if height <= current_height:
+                                logger.exception(f'peer did not provide {bundle}')
+                            bundles_to_retry.add(bundle)
                             continue
                         try:
                             stream.__enter__()
@@ -183,7 +201,9 @@ class Stream:
                         except ArweaveNetworkException as exc:
                             stream.__exit__(None, None)
                             if exc.args[1] == 404:
-                                logger.exception(f'peer did not provide chunks for {bundle}')
+                                if height <= current_height:
+                                    logger.exception(f'peer did not provide chunks for {bundle}')
+                                bundles_to_retry.add(bundle)
                                 continue
                             raise
                         if id in header.length_by_id:
@@ -199,6 +219,19 @@ class Stream:
                             return ANS104DataItemHeader.fromstream(stream), stream, end - stream.tell()
                         else:
                             stream.__exit__(None, None, None)
+                            bundles_to_retry.discard(bundle)
+                            if height > current_height:
+                                assert height == current_height + 1
+                                bundles_tried.add(bundle)
+                            else:
+                                bundles_tried.discard(bundle)
+                    
+                    if height <= current_height:
+                        height += 1
+                    current_height = self.peer.height()
+                    if height > current_height + 1:
+                        height = current_height - 1
+                        self.recache_blocks_from(current_height)
                 raise KeyError(dict(dataitem=id, preceding_block=preceding_block))
             except KeyError:
                 logger.exception(f'{id} not found on chain (yet?), waiting 60 seconds to look again [better: look back and forward for other parts of stream as earlier code did]')
