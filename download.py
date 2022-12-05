@@ -25,6 +25,7 @@ class Stream:
         self.bundle_cache = {}
         self.cached_bundle = None
         self.follow_owner = follow_owner
+        self.tail_height = 0
         if type(metadata) is list:
             # full metadata for an ending range
             self.tail = metadata
@@ -44,6 +45,7 @@ class Stream:
         #self.poll()
         return sum((size for leaf_count, data, start, size in self.tail))
     #def poll(self):
+    #   ## -> check heights >= self.tail_height [note: code could be organized/optimized with content of dataitem()]
     #    if self.follow_owner and peer.height() > 
     def iterate(self):
         # this function is the guts of a class that wraps a tree root record
@@ -220,6 +222,8 @@ class Stream:
                                 continue
                             raise
                         if id in header.length_by_id:
+                            if height > self.tail_height:
+                                self.tail_height = height
                             if self.cached_bundle is not None:
                                 old_header, old_stream = self.cached_bundle
                                 old_stream.__exit__(None, None)

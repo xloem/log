@@ -30,13 +30,14 @@ reader = nonblocking.Reader(
     max_size=100000,
     lines=False,
     #lines=True,
-    max_count=1024, # max number queued
-    drop_timeout=0, # max time to wait adding to queue when full (waits forever if None)
+    max_count=1024*1024,#256, #1024, # max number queued
+    drop_timeout=None, #0, # max time to wait adding to queue when full (waits forever if None)
     drop_older=True,
     pre_cb=lambda: time.time(),
     post_cb=lambda tuple: (*tuple, time.time()),
     verbose=True,
 )
+max_at_once = 64
 #capture = sys.stdin.buffer
 
 node = Node()
@@ -83,7 +84,7 @@ while reader.block():
     #reader.block()
     with reader:
         dropped_ct, dropped_size = reader.dropped(reset = True)
-        raws = reader.read_many()
+        raws = reader.read_many(max_at_once)
     sys.stderr.write(f'Read {len(raws)} data chunks\n')
     if dropped_ct:
         sys.stderr.write(f'Dropped {dropped_size} bytes from {dropped_ct} reads at {last_post_time}\n')
