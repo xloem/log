@@ -46,7 +46,9 @@ class Stream:
         return sum((size for leaf_count, data, start, size in self.tail))
     #def poll(self):
     #   ## -> check heights >= self.tail_height [note: code could be organized/optimized with content of dataitem()]
-    #    if self.follow_owner and peer.height() > 
+    #            ### it may make sense to put this code into dataitem(); then it can increment tail_height when it
+    #                finds blocks that have no content. maybe it could take a dummy parameter?
+    #    #if self.follow_owner and self.peer.height() > self.tail_height:
     def iterate(self):
         # this function is the guts of a class that wraps a tree root record
         # indexing binary data on a blockchain. it is intended to yield the
@@ -237,9 +239,10 @@ class Stream:
                         else:
                             # here is where a new bundle header has been parsed
                             # if height > current_height, there could be a new tip in the bundle
-                            # UPDATE: this doesn't go here. it would happen when the stream should be extended.
+                            # UPDATE: maybe this doesn't go here. it would happen when the stream should be extended.
                             #         i.e., either on user request or on new block found.
                             #         note that it is only needed when the stream is seeked or its length or tail queried.
+                            #               however, there's already shared code here. one could e.g. pass None for id.
                             # stubbed a self.poll() function for this, could call it at end of iterate()
                             #if height > current_height and type(self.follow_owner) is str:
                             #    offset = header.get_len_bytes()
