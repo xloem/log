@@ -5,4 +5,7 @@ sudo echo ''
     ffmpeg -f x11grab -rtbufsize $((2**31-1)) -i :0 -f pulse -i default -c:v libx264 -preset ultrafast -crf 28 -c:a libopus -f matroska -movflags +faststart - &
     sudo renice -n -5 --pid $! 1>&2
     wait 1>&2
-}  | python3 capture_stdin.py
+}  | {
+    exec 4<&0 0</dev/tty
+    python3 "$@" capture_stdin.py 4
+}
