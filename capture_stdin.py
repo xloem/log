@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
 import time
+import logging
+import concurrent.futures
 last_post_time = time.time()
 
 from datetime import datetime
@@ -24,13 +26,20 @@ except:
 print('Capturing ...')
 #capture = Popen("./capture", stdout=PIPE).stdout
 #capture = Popen(('sh','-c','./capture | tee last_capture.log.bin'), stdout=PIPE).stdout
-import sys
+import sys, os
+if len(sys.argv) <= 1:
+    fh = sys.stdin.buffer
+else:
+    try:
+        fh = os.fdopen(int(sys.argv[1]), 'rb')
+    except:
+        fh = open(sys.argv[1], 'rb')
 reader = nonblocking.Reader(
-    sys.stdin.buffer,
+    fh,
     max_size=100000,
     lines=False,
     #lines=True,
-    max_count=8*1024,#256, #1024, # max number queued
+    max_count=16*1024,#256, #1024, # max number queued
     drop_timeout=None, #0, # max time to wait adding to queue when full (waits forever if None)
     drop_older=True,
     pre_cb=lambda: time.time(),
@@ -60,6 +69,7 @@ def send(data, **tags):
                     id = di.header.id,
                     timestamp = f'code 201 (already received) around {start*1000}'
                 )
+            logging.exception(exc)
             print(exc, file=sys.stderr)
             continue
         except Exception as exc:
@@ -96,7 +106,8 @@ while reader.block():
     #data_array = []
     #for offset in range(0,len(raw),100000):
     #    data_array.append(send(raw[offset:offset+100000]))
-    data_array = [send(raw) for pre_time, raw, post_time in raws]
+    #data_array = [send(raw) for pre_time, raw, post_time in raws]
+    data_array = list(concurrent.futures.ThreadPoolExecutor(max_workers=4).map(send, [raw for pre_time, raw, post_time in raws]))
     if time.time() > last_block_time + 60:
         current_block = peer.current_block()
         last_block_time = time.time()
