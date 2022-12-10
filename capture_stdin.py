@@ -109,8 +109,11 @@ while reader.block():
     #data_array = [send(raw) for pre_time, raw, post_time in raws]
     data_array = list(concurrent.futures.ThreadPoolExecutor(max_workers=4).map(send, [raw for pre_time, raw, post_time in raws]))
     if time.time() > last_block_time + 60:
-        current_block = peer.current_block()
-        last_block_time = time.time()
+        try:
+            current_block = peer.current_block()
+            last_block_time = time.time()
+        except:
+            pass
     indices.append(
         prev_indices_id,
         sum((len(raw) for pre_time, raw, post_time in raws)),
