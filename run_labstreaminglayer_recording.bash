@@ -1,6 +1,6 @@
 sudo echo ''
 {
-    LabRecorderCLI /dev/fd/3 '' 3>&1 1>&2
+    PATH=/usr/local/LabRecorder:"$PATH" LabRecorderCLI /dev/fd/3 '' 3>&1 1>&2
     sudo renice -n -5 --pid $! 1>&2
     wait 1>&2
 } | {
