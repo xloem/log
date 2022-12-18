@@ -3,3 +3,4 @@ flat-tree @ git+https://github.com/xloem/flat_tree@main
 watchdog==2.1.9
 zstandard==0.18.0
 nonblocking-stream-queue==0.1.4
+tqdm==4.62.3
