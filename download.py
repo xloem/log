@@ -3,7 +3,8 @@
 import datetime
 import itertools, logging, sys, time
 import json
-from flat_tree import flat_tree
+#from flat_tree import flat_tree, __version__ as flat_tree_version
+from flat_tree.append_indices import append_indices
 from ar import Block, Transaction, Peer, DataItem, ANS104BundleHeader, ANS104DataItemHeader, ArweaveException, ArweaveNetworkException, logger
 import ar.utils
 try:
@@ -12,6 +13,8 @@ except:
     logging.warning('tqdm not found, no progress output')
     def tqdm(iter, *params, **kwparams):
         yield from iter
+
+#logging.basicConfig(level=logging.DEBUG)
 
 logging.warning('Note: this script downloads without verifying data integrity. Not that hard to add integrity checks into pyarweave\'s peer stream class.')
 
@@ -54,7 +57,7 @@ class Stream:
         # indexing binary data on a blockchain. it is intended to yield the
         # chunks in order when called.
 
-        comparison = flat_tree(degree=3)
+        comparison = append_indices(degree=3)
 
         # the number of bytes that have been yielded, increased every chunk
         stream_output_offset = 0

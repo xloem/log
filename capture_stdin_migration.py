@@ -13,7 +13,7 @@ from ar import Peer, Wallet, DataItem, ArweaveNetworkException
 from ar.utils import create_tag
 from bundlr import Node
 # indexes a balanced tree of past indices
-from flat_tree import flat_tree
+from flat_tree import flat_tree, __version__ as flat_tree_version
 
 #print('warning: this script hopefully works but drops chunks due to waiting on network and not buffering input')
 import nonblocking_stream_queue as nonblocking
@@ -78,6 +78,10 @@ class BundlrStorage:
     def store_data(self, raws):
         global last_post_time # so it can start prior to imports
         global dropped_ct, dropped_size # for quick implementation
+        #data_array = []
+        #for offset in range(0,len(raw),100000):
+        #    data_array.append(send(raw[offset:offset+100000]))
+        #data_array = [self.send(raw) for pre_time, raw, post_time in raws]
         data_array = list(concurrent.futures.ThreadPoolExecutor(max_workers=4).map(self.send, [raw for pre_time, raw, post_time in raws]))
         return dict(
             capture = dict(
@@ -120,18 +124,16 @@ class BundlrStorage:
                 continue
         return result
 
+bundlrstorage = BundlrStorage()
 first = None
 start_block = None
 prev_indices_id = None
-peer = Peer()
 offset = 0
-indices = flat_tree(3) #append_indices(3)
+if flat_tree_version in ('0.0.0', '0.0.1'): # took an index id
+    indices = flat_tree(3) #append_indices(3)
+else: # took a storage object
+    indices = flat_tree(bundlrstorage, 3)
 #index_values = indices
-
-current_block = peer.current_block()
-last_block_time = time.time()
-
-bundlrstorage = BundlrStorage()
 
 #dump = open('dump.bin', 'wb')
 while reader.block():
@@ -148,52 +150,27 @@ while reader.block():
     #    dump.write(raw)
     #if len(raw) == 0:
     #    break
-    #data_array = []
-    #for offset in range(0,len(raw),100000):
-    #    data_array.append(send(raw[offset:offset+100000]))
-    #data_array = [send(raw) for pre_time, raw, post_time in raws]
-    data_id = bundlrstorage.store_data(raws)
-    #data_array = list(concurrent.futures.ThreadPoolExecutor(max_workers=4).map(send, [raw for pre_time, raw, post_time in raws]))
-    #if time.time() > last_block_time + 60:
-    #    try:
-    #        current_block = peer.current_block()
-    #        last_block_time = time.time()
-    #    except:
-    #        pass
-    indices.append(
-        prev_indices_id,
-        sum((len(raw) for pre_time, raw, post_time in raws)),
-        data_id
-        #dict(
-        #    capture = dict(
-        #        ditem = [data['id'] for data in data_array],
-        #        time = [pre_time for pre_time, raw, post_time in raws],
-        #    ),
-        #    min_block = (current_block['height'], current_block['indep_hash']),
-        #    #api_block = data_array[-1]['block'],
-        #    api_timestamp = data_array[-1]['timestamp'],
-        #    dropped = dict(
-        #        count = dropped_ct,
-        #        size = dropped_size,
-        #        time = last_post_time,
-        #    ) if dropped_ct else None,
-        #),
-    )
+    if flat_tree_version in ('0.0.0', '0.0.1'): # took an index id
+        indices.append(
+            prev_indices_id,
+            sum((len(raw) for pre_time, raw, post_time in raws)),
+            bundlrstorage.store_data(raws)
+        )
+        metadata = indices.snap()#[(type, data, start, size) for type, data, start, size, *_ in indices]
+        prev_indices_id = bundlrstorage.store_index(metadata)
+    else: # took a storage object
+        indices.append(
+            sum((len(raw) for pre_time, raw, post_time in raws)),
+            bundlrstorage.store_data(raws)
+        )
+        prev_indices_id = indices.locator
     last_pre_time, last_raw, last_post_time = raws[-1]
-    metadata = indices.snap()#[(type, data, start, size) for type, data, start, size, *_ in indices]
-    #result = send(json.dumps(metadata).encode())
-    #prev_indices_id = dict(
-    #    ditem = [result['id']],
-    #    min_block = (current_block['height'], current_block['indep_hash']),
-    #    #api_block = result['block'],
-    #    api_timestamp = result['timestamp'],
-    #)
-    prev_indices_id = bundlrstorage.store_index(metadata)
     #offset += len(raw)
+    #indices.append(dict(dataitem=prev, current_block=current_block['indep_hash'])#, end_offset=offset), )
+
     if first is None:
         first = prev_indices_id['ditem'][0]
-        start_block = current_block['indep_hash']
-    #indices.append(dict(dataitem=prev, current_block=current_block['indep_hash'])#, end_offset=offset), )
+        start_block = bundlrstorage.current_block['indep_hash']
 
     #eta = current_block['timestamp'] + (result['block'] - current_block['height']) * 60 * 2
     #eta = datetime.fromtimestamp(eta)
