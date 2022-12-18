@@ -8,6 +8,7 @@ last_post_time = time.time()
 from datetime import datetime
 from subprocess import Popen, PIPE
 import json
+import ar
 from ar import Peer, Wallet, DataItem, ArweaveNetworkException
 from ar.utils import create_tag
 from bundlr import Node
@@ -49,33 +50,75 @@ reader = nonblocking.Reader(
 max_at_once = 64
 #capture = sys.stdin.buffer
 
-node = Node()
-def send(data, **tags):
-    di = DataItem(data = data)
-    di.header.tags = [
-        create_tag(key, val, True)
-        for key, val in tags.items()
-    ]
-    di.sign(wallet.rsa)
-    while True:
-        try:
-            start = time.time()
-            result = node.send_tx(di.tobytes())
-            break
-        except ArweaveNetworkException as exc:
-            message, status_code, cause, response = exc.args
-            if status_code == 201: # transaction already received
-                return dict(
-                    id = di.header.id,
-                    timestamp = f'code 201 (already received) around {start*1000}'
-                )
-            logging.exception(exc)
-            print(exc, file=sys.stderr)
-            continue
-        except Exception as exc:
-            print(exc, file=sys.stderr)
-            continue
-    return result
+class BundlrStorage:
+    def __init__(self, **tags):
+        self.peer = Peer()
+        self.node = Node()
+        self.tags = tags
+        self._current_block = self.peer.current_block()
+        self._last_block_time = time.time()
+    @property
+    def current_block(self):
+        now = time.time()
+        if now > self._last_block_time + 60:
+            try:
+                self._current_block = self.peer.current_block()
+                self._last_block_time = now
+            except:
+                pass
+        return self._current_block
+    def store_index(self, metadata):
+        result = self.send(json.dumps(metadata).encode())
+        return dict(
+            ditem = [result['id']],
+            min_block = (self.current_block['height'], self.current_block['indep_hash']),
+            #api_block = result['block'],
+            api_timestamp = result['timestamp'],
+        )
+    def store_data(self, raws):
+        global last_post_time # so it can start prior to imports
+        global dropped_ct, dropped_size # for quick implementation
+        data_array = list(concurrent.futures.ThreadPoolExecutor(max_workers=4).map(self.send, [raw for pre_time, raw, post_time in raws]))
+        return dict(
+            capture = dict(
+                ditem = [data['id'] for data in data_array],
+                time = [pre_time for pre_time, raw, post_time in raws],
+            ),
+            min_block = (self.current_block['height'], self.current_block['indep_hash']),
+            #api_block = data_array[-1]['block'],
+            api_timestamp = data_array[-1]['timestamp'],
+            dropped = dict(
+                count = dropped_ct,
+                size = dropped_size,
+                time = last_post_time,
+            ) if dropped_ct else None,
+        )
+    def send(self, data, **tags):
+        di = ar.DataItem(data = data)
+        di.header.tags = [
+            create_tag(key, val, True)
+            for key, val in {**self.tags, **tags}.items()
+        ]
+        di.sign(wallet.rsa)
+        while True:
+            try:
+                start = time.time()
+                result = self.node.send_tx(di.tobytes())
+                break
+            except ar.ArweaveNetworkException as exc:
+                message, status_code, cause, response = exc.args
+                if status_code == 201: # transaction already received
+                    return dict(
+                        id = di.header.id,
+                        timestamp = f'code 201 (already received) around {start*1000}'
+                    )
+                logging.exception(exc)
+                print(exc, file=sys.stderr)
+                continue
+            except Exception as exc:
+                print(exc, file=sys.stderr)
+                continue
+        return result
 
 first = None
 start_block = None
@@ -87,6 +130,8 @@ indices = flat_tree(3) #append_indices(3)
 
 current_block = peer.current_block()
 last_block_time = time.time()
+
+bundlrstorage = BundlrStorage()
 
 #dump = open('dump.bin', 'wb')
 while reader.block():
@@ -107,40 +152,43 @@ while reader.block():
     #for offset in range(0,len(raw),100000):
     #    data_array.append(send(raw[offset:offset+100000]))
     #data_array = [send(raw) for pre_time, raw, post_time in raws]
-    data_array = list(concurrent.futures.ThreadPoolExecutor(max_workers=4).map(send, [raw for pre_time, raw, post_time in raws]))
-    if time.time() > last_block_time + 60:
-        try:
-            current_block = peer.current_block()
-            last_block_time = time.time()
-        except:
-            pass
+    data_id = bundlrstorage.store_data(raws)
+    #data_array = list(concurrent.futures.ThreadPoolExecutor(max_workers=4).map(send, [raw for pre_time, raw, post_time in raws]))
+    #if time.time() > last_block_time + 60:
+    #    try:
+    #        current_block = peer.current_block()
+    #        last_block_time = time.time()
+    #    except:
+    #        pass
     indices.append(
         prev_indices_id,
         sum((len(raw) for pre_time, raw, post_time in raws)),
-        dict(
-            capture = dict(
-                ditem = [data['id'] for data in data_array],
-                time = [pre_time for pre_time, raw, post_time in raws],
-            ),
-            min_block = (current_block['height'], current_block['indep_hash']),
-            #api_block = data_array[-1]['block'],
-            api_timestamp = data_array[-1]['timestamp'],
-            dropped = dict(
-                count = dropped_ct,
-                size = dropped_size,
-                time = last_post_time,
-            ) if dropped_ct else None,
-        ),
+        data_id
+        #dict(
+        #    capture = dict(
+        #        ditem = [data['id'] for data in data_array],
+        #        time = [pre_time for pre_time, raw, post_time in raws],
+        #    ),
+        #    min_block = (current_block['height'], current_block['indep_hash']),
+        #    #api_block = data_array[-1]['block'],
+        #    api_timestamp = data_array[-1]['timestamp'],
+        #    dropped = dict(
+        #        count = dropped_ct,
+        #        size = dropped_size,
+        #        time = last_post_time,
+        #    ) if dropped_ct else None,
+        #),
     )
     last_pre_time, last_raw, last_post_time = raws[-1]
     metadata = indices.snap()#[(type, data, start, size) for type, data, start, size, *_ in indices]
-    result = send(json.dumps(metadata).encode())
-    prev_indices_id = dict(
-        ditem = [result['id']],
-        min_block = (current_block['height'], current_block['indep_hash']),
-        #api_block = result['block'],
-        api_timestamp = result['timestamp'],
-    )
+    #result = send(json.dumps(metadata).encode())
+    #prev_indices_id = dict(
+    #    ditem = [result['id']],
+    #    min_block = (current_block['height'], current_block['indep_hash']),
+    #    #api_block = result['block'],
+    #    api_timestamp = result['timestamp'],
+    #)
+    prev_indices_id = bundlrstorage.store_index(metadata)
     #offset += len(raw)
     if first is None:
         first = prev_indices_id['ditem'][0]
