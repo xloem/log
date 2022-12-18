@@ -285,8 +285,11 @@ for fn in sys.argv[1:]:
     with open(fn) as fh:
         stream = Stream(json.load(fh), Peer())#'http://gateway-4.arweave.net:1984'))
     for metadata, channel_name, time, header, stream, length in stream.iterate():
-        time = datetime.datetime.fromtimestamp(time).isoformat()
-        sys.stderr.write('channel data: ' + channel_name + ': ' + str(length) + ' @ ' + time + '\n')#repr(stream.read(length))+'\n')
+        if time is not None:
+            time = datetime.datetime.fromtimestamp(time).isoformat()
+            sys.stderr.write('channel data: ' + channel_name + ': ' + str(length) + ' @ ' + time + '\n')#repr(stream.read(length))+'\n')
+        else:
+            sys.stderr.write('channel data: ' + channel_name + ': ' + str(length) + '\n')#repr(stream.read(length))+'\n')
         if channel_name == 'capture':
             sys.stdout.buffer.write(stream.read(length))
         #else:
