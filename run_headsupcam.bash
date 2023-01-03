@@ -5,6 +5,6 @@ fi
 export DISPLAY
 while true
 do
-    ffplay -f v4l2 -video_size 320x200  /dev/video1
+    ffplay -f v4l2 -video_size 320x200  "$(ls /dev/video* | tail -n 1)"
 done
 
