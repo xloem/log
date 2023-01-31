@@ -29,6 +29,13 @@ class Stream:
         self.cached_bundle = None
         self.follow_owner = follow_owner
         self.tail_height = 0
+        self.follow_owner = follow_owner
+        self.update_tail(metadata)
+        if self.follow_owner is True:
+            ditem_header, ditem_stream, ditem_size = self.dataitem(guess_owner_metadata['ditem'][-1], guess_owner_metadata['min_block'])
+            self.follow_owner = ditem_header.owner
+            logger.warning(f'following not implemented yet, but guessing owner to follow as {self.follow_owner} !')
+    def update_tail(self, metadata):
         if type(metadata) is list:
             # full metadata for an ending range
             self.tail = metadata
@@ -38,12 +45,6 @@ class Stream:
             guess_owner_metadata = metadata
         else:
             raise AssertionError('unexpected metadata structure', metadata)
-        if follow_owner is True:
-            ditem_header, ditem_stream, ditem_size = self.dataitem(guess_owner_metadata['ditem'][-1], guess_owner_metadata['min_block'])
-            self.follow_owner = ditem_header.owner
-            logger.warning(f'following not implemented yet, but guessing owner to follow as {self.follow_owner} !')
-        else:
-            self.follow_owner = follow_owner
     def __len__(self):
         #self.poll()
         return sum((size for leaf_count, data, start, size in self.tail))
