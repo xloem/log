@@ -30,12 +30,14 @@ class Stream:
         self.follow_owner = follow_owner
         self.tail_height = 0
         self.follow_owner = follow_owner
+        self.tail = None
         self.update_tail(metadata)
         if self.follow_owner is True:
             ditem_header, ditem_stream, ditem_size = self.dataitem(guess_owner_metadata['ditem'][-1], guess_owner_metadata['min_block'])
             self.follow_owner = ditem_header.owner
             logger.warning(f'following not implemented yet, but guessing owner to follow as {self.follow_owner} !')
     def update_tail(self, metadata):
+        old_tail = self.tail
         if type(metadata) is list:
             # full metadata for an ending range
             self.tail = metadata
@@ -45,6 +47,7 @@ class Stream:
             guess_owner_metadata = metadata
         else:
             raise AssertionError('unexpected metadata structure', metadata)
+        return self.tail != old_tail
     def __len__(self):
         #self.poll()
         return sum((size for leaf_count, data, start, size in self.tail))
@@ -294,3 +297,7 @@ for fn in sys.argv[1:]:
         if channel_name == 'capture':
             sys.stdout.buffer.write(stream.read(length))
         #else:
+    with open(fn) as fh:
+        if stream.update_tail(json.load(fh)):
+            # new content available in file
+            pass
