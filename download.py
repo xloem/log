@@ -32,10 +32,6 @@ class Stream:
         self.follow_owner = follow_owner
         self.tail = None
         self.update_tail(metadata)
-        if self.follow_owner is True:
-            ditem_header, ditem_stream, ditem_size = self.dataitem(guess_owner_metadata['ditem'][-1], guess_owner_metadata['min_block'])
-            self.follow_owner = ditem_header.owner
-            logger.warning(f'following not implemented yet, but guessing owner to follow as {self.follow_owner} !')
     def update_tail(self, metadata):
         old_tail = self.tail
         if type(metadata) is list:
@@ -47,6 +43,10 @@ class Stream:
             guess_owner_metadata = metadata
         else:
             raise AssertionError('unexpected metadata structure', metadata)
+        if self.follow_owner is True:
+            ditem_header, ditem_stream, ditem_size = self.dataitem(guess_owner_metadata['ditem'][-1], guess_owner_metadata['min_block'])
+            self.follow_owner = ditem_header.owner
+            logger.warning(f'following not implemented yet, but guessing owner to follow as {self.follow_owner} !')
         return self.tail != old_tail
     def __len__(self):
         #self.poll()
