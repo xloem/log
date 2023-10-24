@@ -75,12 +75,16 @@ class BundlrStorage:
         sha256 = hashlib.sha256()
         sha256.update(data)
         sha256 = sha256.hexdigest()
+        blake2b = hashlib.blake2b()
+        blake2b.update(data)
+        blake2b = blake2b.hexdigest()
         return dict(
             ditem = [result['id']],
             min_block = (self.current_block['height'], self.current_block['indep_hash']),
             #api_block = result['block'],
             rcpt = confirmation['id'],
             sha256 = sha256,
+            blake2b = blake2b,
         )
     def store_data(self, raws):
         global last_post_time # so it can start prior to imports
@@ -95,6 +99,10 @@ class BundlrStorage:
         for pre, raw, post in raws:
           sha256.update(raw)
         sha256 = sha256.hexdigest()
+        blake2b = hashlib.blake2b()
+        for pre, raw, post in raws:
+          blake2b.update(raw)
+        blake2b = blake2b.hexdigest()
         return dict(
             capture = dict(
                 ditem = [data['id'] for data in data_array],
@@ -104,6 +112,7 @@ class BundlrStorage:
             #api_block = data_array[-1]['block'],
             rcpt = confirmation['id'],
             sha256 = sha256,
+            blake2b = blake2b,
             dropped = dict(
                 count = dropped_ct,
                 size = dropped_size,
