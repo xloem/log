@@ -4,7 +4,7 @@ on_trap() {
 	kill "$(<"$fn".pid)"
 	rm "$fn".pid
 }
-termux-microphone-record -f "$fn" -l 0
+termux-microphone-record -f "$fn" -l 0 -b 6144
 trap on_trap INT
 trap on_trap TERM
 {
