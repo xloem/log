@@ -9,6 +9,7 @@ from datetime import datetime
 from subprocess import Popen, PIPE
 import json
 import ar
+import hashlib
 from ar import Peer, Wallet, DataItem, ArweaveNetworkException
 from ar.utils import create_tag
 from bundlr import Node
@@ -68,12 +69,22 @@ class BundlrStorage:
                 pass
         return self._current_block
     def store_index(self, metadata):
-        result = self.send(json.dumps(metadata).encode())
+        data = json.dumps(metadata).encode()
+        result = self.send(data)
+        confirmation = self.send(json.dumps(result).encode())
+        sha256 = hashlib.sha256()
+        sha256.update(data)
+        sha256 = sha256.hexdigest()
+        blake2b = hashlib.blake2b()
+        blake2b.update(data)
+        blake2b = blake2b.hexdigest()
         return dict(
             ditem = [result['id']],
             min_block = (self.current_block['height'], self.current_block['indep_hash']),
             #api_block = result['block'],
-            api_timestamp = result['timestamp'],
+            rcpt = confirmation['id'],
+            sha256 = sha256,
+            blake2b = blake2b,
         )
     def store_data(self, raws):
         global last_post_time # so it can start prior to imports
@@ -83,6 +94,15 @@ class BundlrStorage:
         #    data_array.append(send(raw[offset:offset+100000]))
         #data_array = [self.send(raw) for pre_time, raw, post_time in raws]
         data_array = list(concurrent.futures.ThreadPoolExecutor(max_workers=4).map(self.send, [raw for pre_time, raw, post_time in raws]))
+        confirmation = self.send(json.dumps(data_array).encode())
+        sha256 = hashlib.sha256()
+        for pre, raw, post in raws:
+          sha256.update(raw)
+        sha256 = sha256.hexdigest()
+        blake2b = hashlib.blake2b()
+        for pre, raw, post in raws:
+          blake2b.update(raw)
+        blake2b = blake2b.hexdigest()
         return dict(
             capture = dict(
                 ditem = [data['id'] for data in data_array],
@@ -90,7 +110,9 @@ class BundlrStorage:
             ),
             min_block = (self.current_block['height'], self.current_block['indep_hash']),
             #api_block = data_array[-1]['block'],
-            api_timestamp = data_array[-1]['timestamp'],
+            rcpt = confirmation['id'],
+            sha256 = sha256,
+            blake2b = blake2b,
             dropped = dict(
                 count = dropped_ct,
                 size = dropped_size,
