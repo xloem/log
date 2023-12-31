@@ -47,13 +47,13 @@ reader = nonblocking.Reader(
     post_cb=lambda tuple: (*tuple, time.time()),
     verbose=True,
 )
-max_at_once = 64
+max_at_once = 32#64
 #capture = sys.stdin.buffer
 
 class BundlrStorage:
     def __init__(self, **tags):
-        self.peer = Peer()
-        self.node = Node()
+        self.peer = Peer('https://ar-io.dev', timeout=240)#)
+        self.node = Node(timeout=240)#60)
         self.tags = tags
         self._current_block = self.peer.current_block()
         self._last_block_time = time.time()
