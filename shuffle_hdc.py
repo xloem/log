@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-
 import socket
 import requests
-import os
+import os, shutil
 import sys
 import tqdm
 import decimal, time, logging, concurrent.futures, ar, hashlib, ar.utils, bundlr, flat_tree, nonblocking_stream_queue
@@ -17,16 +16,47 @@ def path_to_pre_time(path):
     assert secs.isdigit() and micros.isdigit()
     return decimal.Decimal(secs+'.'+micros)
 
+def free_space_bar(name, used, available):#, **kwparams):
+    pbar = tqdm.tqdm(
+        bar_format='{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt}{postfix}',
+        total=available+used,
+        desc=f'{name} usage',
+        unit='B',
+        unit_scale=True,
+        unit_divisor=1024,
+    )
+    update = pbar.update
+    update(used)
+    pbar.refresh()
+    def update_(new_used, new_available):
+        nonlocal used, available
+        if new_used is not None:
+            used += new_used
+        if new_available is not None:
+            available = new_available
+        pbar.total = used + available
+        update(new_used)
+    pbar.update = update_
+    return pbar
+
 class Local:
     def __init__(self):
-        self.path = 'stash'
+        self.path = os.path.basename(__file__).rsplit('.',1)[0]+'_stash'
+        os.makedirs(self.path, exist_ok=True)
+    def get(self, fn):
+        fn = fn.rsplit('/',1)[-1]
+        return self.File(self, fn)
     def send(self, fn, stream):
+        fn = fn.rsplit('/',1)[-1]
         with open(os.path.join(self.path, fn), 'wb') as f:
             for chunk in stream:
                 f.write(chunk)
     class File:
         def __init__(self, local, fn):
             self.path = os.path.join(local.path, fn)
+        @property
+        def exists(self):
+            return os.path.exists(self.path)
         def recv(self, chunk=1024*1024):
             with open(self.path, 'rb') as f:
                 while True:
@@ -36,8 +66,15 @@ class Local:
                     yield data
         def rm(self):
             os.unlink(self.path)
+        @property
+        def size(self):
+            return os.path.getsize(self.path)
+    @property
+    def available(self):
+        total, used, free = shutil.disk_usage(self.path)
+        return free
     def videos(self):
-        return [self.File(os.path.join(self.path, subpath) for subpath in os.readdir(self.path)]
+        return [self.File(self, subpath) for subpath in os.listdir(self.path)]
 
 class HDC:
     def __init__(self):
@@ -45,19 +82,24 @@ class HDC:
         self.protohost = 'http://'+self.host+':'
         self.videopath = '/mnt/usb/recording/video/'
         self.session = requests.Session()
+        self._req('GET', 5000, 'ping', timeout=1)
     def cmd(self, cmd):
         #print('>', cmd)
-        resp = self._req('POST', 5000, 'api/1/cmd', json=dict(cmd=cmd)).json()
+        try:
+            resp = self._req('POST', 5000, 'api/1/cmd', json=dict(cmd=cmd)).json()
+        except ConnectionError as e:
+            import pdb; pdb.set_trace()
+            raise e
         resp = resp.get('output','') + resp.get('error','')
         #print('<', repr(resp))
         return resp
-    @property
-    def connected(self):
-        try:
-            self._req('GET', 5000, 'ping', timeout=1)
-            return True
-        except requests.ConnectionError:
-            return False
+    #@property
+    #def connected(self):
+    #    try:
+    #        self._req('GET', 5000, 'ping', timeout=1)
+    #        return True
+    #    except requests.ConnectionError:
+    #        return False
     def _req(self, method, port, path='', **kwparams):
         try:
             return self.session.request(method, self.protohost + str(port) + '/' + path, **kwparams)
@@ -65,9 +107,12 @@ class HDC:
             raise
 
     class File:
-        def __init__(self, hdc, path):
+        def __init__(self, hdc, path, size=None):
             self.hdc = hdc
             self.path = path
+            if size is not None:
+                self.size = size
+            assert "'" not in path
         @property
         def pre_time(self):
             #_, name = self.path.rsplit('/',1)
@@ -119,50 +164,44 @@ class HDC:
         def rm(self):
             assert self.call('rm', status=True) == 0
         def set(self, str):
-            escaped = str.replace("'", "'\"'\"'")
-            assert self.call(f"echo -n '{escaped}' >", status='keepoutput') == 0
+            EOF = 'EOF'
+            while EOF in str:
+                EOF = base64.b64encode(random.randbytes(16))
+            assert self.hdc.cmd(f"cat <<{EOF} | head -c -1 >'{self.path}'; echo $?\n{str}\n{EOF}").rstrip() == '0'
         def b2sum(self):
-            self.size # checks size is same
-            return self.call('b2sum', cache=True).rsplit(' ',1)[0]
+            #self.size # checks size is same
+            return self.call('b2sum').rsplit(' ',1)[0]#, cache=True).rsplit(' ',1)[0]
         @property
         def size(self):
-            return self.call('stat -c %s', type=int, cache=True, check=True)
+            return self.call('stat -c %s', type=int)#, cache=True, check=True)
         @property
         def subfiles(self):
             return [
                 #type(self)(self.hdc, self.path.rstrip('/')+'/'+subfile, self.httpport, self.httppath+'/'+subfile, root=self)
                 type(self)(self.hdc, self.path.rstrip('/')+'/'+subfile)
-                for subfile in self.call('ls').split('\n')
+                for subfile in self.call('ls').strip().split('\n')
             ]
+        def recv_prep(self):
+            self.prepped = True
+            self.port = (int.from_bytes(hashlib.sha256(self.path.encode()).digest(),'little') % 32768) + 32768
         def recv(self, chunk=1024*1024):
-            port = 7000
-            self.hdc.cmd(f"nc -l -p {7000} < '{self.path}' > /dev/null 2>&1 &")
+            assert self.prepped
+            self.prepped = False
+            self.hdc.cmd(f"nc -l -p {self.port} < '{self.path}' > /dev/null 2>&1 &")
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM) 
-            sock.connect((self.hdc.host, port))
-            with tqdm.tqdm(desc=self.path.rsplit('/',1)[1],total=self.size,unit='B',unit_divisor=1024,unit_scale=True) as pbar:
+            sock.connect((self.hdc.host, self.port))
+            with tqdm.tqdm(desc=self.path.rsplit('/',1)[1],total=self.size,unit='B',unit_divisor=1024,unit_scale=True,leave=False) as pbar:
                 while True:
                     data = sock.recv(chunk)
                     if not data:
                         break
                     yield data
                     pbar.update(len(data))
-
-        #def http_iter_content(self):
-        #    httppath = self.httppath.lstrip('/')
-        #    try:
-        #        if self.root.httpport is None:
-        #            self.root.httpport = (int.from_bytes(self.root.path.encode(),'little') % (65536-1024))+1024
-        #            raise requests.ConnectionError()
-        #        resp = self.hdc._req('GET', self.root.httpport, httppath, stream=True, timeout=1)
-        #    except requests.ConnectionError:
-        #        print('LAUNCHING', self.root.path, self.root.httpport)
-        #        output=self.hdc.cmd(f"nohup python3 -m http.server -d '{self.root.path}' {int(self.root.httpport)} >/dev/null 2>&1 &")
-        #        resp = self.hdc._req('GET', self.root.httpport, httppath, stream=True, timeout=2)
-        #    with tqdm.tqdm(desc=httppath,total=self.size,unit='B',unit_divisor=1024,unit_scale=True) as pbar:
-        #        for chunk in resp.iter_content(1024*1024):
-        #            yield chunk
-        #            pbar.update(len(chunk))
-
+    @property
+    def available(self):
+        header, avail = self.cmd(f"df --output=avail {self.videopath}").rstrip().split('\n')
+        assert header.lstrip() == 'Avail'
+        return int(avail) * 1024
     def videos(self):
         return self.File(self, self.videopath).subfiles
 
@@ -174,7 +213,11 @@ class ArDItemLengths:
             print('.. identity.json ..')
             self.wallet = ar.Wallet.generate(jwk_file='identity.json')
         self.bundlrstorage = self.BundlrStorage(**tags)
+    #@property
+    #def connected(self):
+    #    return self.bundlrstorage.connected
     def send(self, fn, stream):
+        fn = fn.rsplit('/',1)[-1]
         indices = flat_tree.flat_tree(self.bundlrstorage, 3)
         buf = b''
         while True:
@@ -201,11 +244,19 @@ class ArDItemLengths:
 
     class BundlrStorage:
         def __init__(self, **tags):
-            self.peer = ar.Peer()
-            self.node = bundlr.Node()
+            self.peer = ar.Peer(timeout=1)
+            self.node = bundlr.Node(timeout=1)
             self.tags = tags
             self._current_block = self.peer.current_block()
             self._last_block_time = time.time()
+            self.node.info()
+        #@property
+        #def connected(self):
+        #    try:
+        #        self.peer.info()
+        #        self.node.info()
+        #    except requests.ConnectionError:
+        #        return False
         @property
         def current_block(self):
             now = time.time()
@@ -295,12 +346,61 @@ class ArDItemLengths:
             return result
 
 def main():
-    hdc = HDC()
-    assert hdc.connected
-    videos = hdc.videos()
-    for video in videos:
-        print(video.path)
-        print(video.size)
-        print(video.b2sum())
-        print(sum([len(chunk) for chunk in video.recv()]))
-main()
+    print('Observing ...')
+
+    local = Local()
+    local_size = sum([video.size for video in local.videos()])
+    with free_space_bar('Local', local_size, local.available) as local_usage:
+        hdc_connected = False
+        remote_connected = False
+        try:
+            hdc = HDC()
+            hdc_connected = True
+            #hdc_size = sum([video.size for video in hdc.videos()])
+            hdc_usage = free_space_bar('Device', 0, hdc.available)
+        except requests.ConnectionError as e:
+            hdc = e
+        if not hdc_connected:
+            try:
+                remote = ArDItemLengths()
+                remote_connected = True
+            except ar.ArweaveNetworkException as e:
+                remote = e
+
+        if remote_connected:
+            raise NotImplementedError('remote')
+        elif hdc_connected:
+            with hdc_usage:
+                videos = []
+                for v in tqdm.tqdm(hdc.videos(), desc='Prepping', leave=False, unit='m'):
+                    size = v.size
+                    hdc_usage.update(size, None)
+                    local_v = local.get(v.path)
+                    if not local_v.exists or size != local_v.size: # or v.b2sum != local_v.b2sum:
+                        videos.append([v, size])
+                        v.recv_prep()
+                printed_notice = False
+                with tqdm.tqdm(videos, desc='Retrieving', unit='m') as pbar:
+                    for video, video_size in pbar:
+                        #if video_size + local_size > (local.available + local_size) // 2 and not printed_notice:
+                        #    local_usage.desc = 'Local usage exceeds local free !!'
+                        #    #pbar.display('local usage exceeds local free; free some space or upload')
+                        #    #print()
+                        #    #pbar.update()
+                        #    #printed_notice = True
+                        if video_size > local.available:
+                            #print()
+                            pbar.display('ran out of disk space locally')
+                            break
+                        local.send(video.path, video.recv())
+                        local_usage.update(video_size, local.available)
+                    else:
+                        pbar.display('Done.')
+                    pbar.refresh()
+        else:
+            print('Failed to connect to anything.')
+
+        local_size = sum([video.size for video in local.videos()])
+        local_usage.update(local_size, local.available)
+if __name__ == '__main__':
+    main()
