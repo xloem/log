@@ -4,7 +4,11 @@ import requests
 import os, shutil
 import sys
 import tqdm
-import decimal, time, logging, concurrent.futures, ar, hashlib, ar.utils, bundlr, flat_tree, nonblocking_stream_queue
+import av
+import json
+import math
+import fractions, time, logging, concurrent.futures, ar, hashlib, ar.utils, bundlr, flat_tree, nonblocking_stream_queue
+import _hashlib
 
 def path_to_pre_time(path):
     _, name = path.rsplit('/',1)
@@ -14,7 +18,43 @@ def path_to_pre_time(path):
     secs = name[:10]
     micros = name[11:]
     assert secs.isdigit() and micros.isdigit()
-    return decimal.Decimal(secs+'.'+micros)
+    return fractions.Fraction(secs+'.'+micros)
+
+def mp4_to_raws(path):
+    start_time = path_to_pre_time(path)
+    with open(path,'rb') as f:
+        try:
+            c = av.open(f)
+        except av.error.InvalidDataError as e:
+            f.seek(0)
+            yield [start_time, f.read(), start_time] # this should be what was yielded
+            return
+        with c as c:
+            offset = 0 ### using offset instead of packet.pos outputs the header with the first packet, if wanted
+            for packet in c.demux():
+                #import pdb; pdb.set_trace()
+                if packet.dts is None: # flush
+                    assert not packet.size
+                    continue
+                start = start_time + packet.pts * packet.time_base # pts is real time; the frames can be out of order. dts is algorithmic order for decoding, when frames depend on future data.
+                end = start_time + (packet.pts + packet.duration) * packet.time_base
+                assert packet.size == packet.buffer_size
+                tail = packet.pos + packet.size
+                assert tail > offset
+                assert packet.pos == offset or offset == 0
+                #assert tail == f.tell()
+                stash = f.tell()
+                #if stash != tail:
+                #    print('fp at', stash, 'but packet ends at', tail)
+                
+                f.seek(offset)
+                raw = f.read(tail - offset)
+                offset = tail
+                f.seek(stash)
+                #print(start, len(raw), packet, end)
+                yield [start, raw, end]
+            f.seek(0,2)
+            assert offset == f.tell()
 
 def free_space_bar(name, used, available):#, **kwparams):
     pbar = tqdm.tqdm(
@@ -39,6 +79,30 @@ def free_space_bar(name, used, available):#, **kwparams):
     pbar.update = update_
     return pbar
 
+def stream_size_hash(stream, *hashes):
+    hashes = [hash() for hash in hashes]
+    size = 0
+    while True:
+        chunk = stream.read(1024*1024)
+        if not len(chunk):
+            break
+        size += len(chunk)
+        for hash in hashes:
+            hash.update(chunk)
+    return [size, *[hash.hexdigest() for hash in hashes]]
+
+class JSONEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, fractions.Fraction):
+            digits = math.ceil(math.log(obj.denominator, 10))
+            mul = 10 ** digits
+            obj *= mul
+            assert obj.denominator == 1
+            fixed = str(obj)
+            return fixed[:-digits] + '.' + fixed[-digits:]
+        else:
+            return super().default(self, obj)
+
 class Local:
     def __init__(self):
         self.path = os.path.basename(__file__).rsplit('.',1)[0]+'_stash'
@@ -51,24 +115,36 @@ class Local:
         with open(os.path.join(self.path, fn), 'wb') as f:
             for chunk in stream:
                 f.write(chunk)
+    def confirm(self, fn, confirmation):
+        with open(os.path.join(self.path, fn), 'w') as f:
+            json.dump(confirmation, f)
     class File:
         def __init__(self, local, fn):
+            self._local = local
+            self._fn = fn
             self.path = os.path.join(local.path, fn)
         @property
         def exists(self):
             return os.path.exists(self.path)
-        def recv(self, chunk=1024*1024):
-            with open(self.path, 'rb') as f:
-                while True:
-                    data = f.read(chunk)
-                    if not data:
-                        break
-                    yield data
+        #def recv(self, chunk=1024*1024):
+        #    with open(self.path, 'rb') as f:
+        #        while True:
+        #            data = f.read(chunk)
+        #            if not data:
+        #                break
+        #            yield data
+        def recv_dict(self):
+            with open(self.path, 'r') as f:
+                return json.load(f)
+        def recv_raws(self):
+            return mp4_to_raws(self.path)
         def rm(self):
             os.unlink(self.path)
         @property
         def size(self):
             return os.path.getsize(self.path)
+        def locator(self):
+            return type(self)(self._local, self._fn + '.locator')
     @property
     def available(self):
         total, used, free = shutil.disk_usage(self.path)
@@ -206,50 +282,79 @@ class HDC:
         return self.File(self, self.videopath).subfiles
 
 class ArDItemLengths:
-    def __init__(self, **tags):
+    def __init__(self):#, **tags):
         try:
             self.wallet = ar.Wallet('identity.json')
         except:
             print('.. identity.json ..')
             self.wallet = ar.Wallet.generate(jwk_file='identity.json')
-        self.bundlrstorage = self.BundlrStorage(**tags)
+        #self.bundlrstorage = self.BundlrStorage(**tags)
     #@property
     #def connected(self):
     #    return self.bundlrstorage.connected
-    def send(self, fn, stream):
-        fn = fn.rsplit('/',1)[-1]
-        indices = flat_tree.flat_tree(self.bundlrstorage, 3)
-        buf = b''
-        while True:
-            while len(buf) < 100000*64:
-                try:
-                    buf += next(stream)
-                except:
-                    break
-            if not buf:
-                break
-            raws = [buf[idx*100000:(idx+1)*100000] for idx in range(min(64,len(buf)//100000))]
-            buf = buf[100000*64:]
-            time = path_to_pre_time(fn)
-            indices.append(
-                sum([len(raw) for raw in raws]),
-                self.bundlrstorage.store_data([[time, raw, None] for raw in raws])
-            )
-            prev_indices_id= indices.locator
-            last_raw = raws[-1]
-            if first is None:
-                first = prev_indices_id['ditem'][0]
-                start_block = self.bundlrstorage.current_block['indep_hash']
-        return json.dumps(prev_indices_id)
+    #def send(self, fn, stream):
+    #    
+    def send_raws(self, raws_iter, **tags):
+        hash_algs = {
+            name: val
+            for name, val in tags.items()
+            if isinstance(val, _hashlib.HASH) or isinstance(val, hashlib.blake2b) or isinstance(val, hashlib.blake2s)
+        }
+
+        bundlrstorage = self.BundlrStorage(self.wallet)
+        indices = flat_tree.flat_tree(bundlrstorage, 3)
+        raws = []
+        for pre_time, next_buf, post_time in raws_iter:
+            if len(next_buf) <= 100000:
+                raws.append([pre_time, next_buf, post_time])
+            else:
+                raws.extend([
+                    [pre_time, next_buf[off:off+100000], post_time]
+                    for off in range(0, len(next_buf), 100000)
+                ])
+            #while len(buf) < 100000*64:
+            #    try:
+            #        buf += next(stream)
+            #    except:
+            #        break
+            #if not buf:
+            #    break
+                    # the chunks are greater than 100000 I made a mistake.
+                        # the timestamps would be roughly the same i suppose
+            #raws = [buf[idx*100000:(idx+1)*100000] for idx in range(min(64,len(buf)//100000))]
+            #buf = buf[100000*64:]
+            #time = path_to_pre_time(fn)
+
+            while len(raws):
+                new_idx = bundlrstorage.store_data(raws[:64])
+                for hash in hash_algs.values():
+                    for _, raw, _ in raws[:64]:
+                        hash.update(raw)
+                bundlrstorage.tags = {
+                    **tags,
+                    **{ name: alg.digest() for name, alg in hash_algs.items() }
+                }
+                indices.append(
+                    sum([len(raw) for _, raw, _ in raws[:64]]),
+                    new_idx
+                )
+                bundlrstorage.tags = {}
+                raws = raws[64:]
+                #prev_indices_id = indices.locator
+                #if first is None:
+                #    first = prev_indices_id['ditem'][0]
+                #    start_block = self.bundlrstorage.current_block['indep_hash']
+        return json.dumps(indices.locator, cls=JSONEncoder) #prev_indices_id)
 
     class BundlrStorage:
-        def __init__(self, **tags):
-            self.peer = ar.Peer(timeout=1)
+        def __init__(self, wallet=PermissionError('no wallet provided'), **tags):
+            self.peer = ar.Peer(ar.PUBLIC_GATEWAYS[1], timeout=1)
             self.node = bundlr.Node(timeout=1)
             self.tags = tags
             self._current_block = self.peer.current_block()
             self._last_block_time = time.time()
             self.node.info()
+            self.wallet = wallet
         #@property
         #def connected(self):
         #    try:
@@ -268,9 +373,9 @@ class ArDItemLengths:
                     pass
             return self._current_block
         def store_index(self, metadata):
-            data = json.dumps(metadata).encode()
+            data = json.dumps(metadata, cls=JSONEncoder).encode()
             result = self.send(data)
-            confirmation = self.send(json.dumps(result).encode())
+            confirmation = self.send(json.dumps(result, cls=JSONEncoder).encode())
             sha256 = hashlib.sha256()
             sha256.update(data)
             sha256 = sha256.hexdigest()
@@ -287,13 +392,13 @@ class ArDItemLengths:
             )
         def store_data(self, raws):
             global last_post_time # so it can start prior to imports
-            global dropped_ct, dropped_size # for quick implementation
+            #global dropped_ct, dropped_size # for quick implementation
             #data_array = []
             #for offset in range(0,len(raw),100000):
             #    data_array.append(send(raw[offset:offset+100000]))
             #data_array = [self.send(raw) for pre_time, raw, post_time in raws]
             data_array = list(concurrent.futures.ThreadPoolExecutor(max_workers=4).map(self.send, [raw for pre_time, raw, post_time in raws]))
-            confirmation = self.send(json.dumps(data_array).encode())
+            confirmation = self.send(json.dumps(data_array, cls=JSONEncoder).encode())
             sha256 = hashlib.sha256()
             for pre, raw, post in raws:
               sha256.update(raw)
@@ -312,19 +417,19 @@ class ArDItemLengths:
                 rcpt = confirmation['id'],
                 sha256 = sha256,
                 blake2b = blake2b,
-                dropped = dict(
-                    count = dropped_ct,
-                    size = dropped_size,
-                    time = last_post_time,
-                ) if dropped_ct else None,
+                #dropped = dict(
+                #    count = dropped_ct,
+                #    size = dropped_size,
+                #    time = last_post_time,
+                #) if dropped_ct else None,
             )
         def send(self, data, **tags):
             di = ar.DataItem(data = data)
             di.header.tags = [
-                create_tag(key, val, True)
+                ar.utils.create_tag(key, val, True)
                 for key, val in {**self.tags, **tags}.items()
             ]
-            di.sign(wallet.rsa)
+            di.sign(self.wallet.rsa)
             while True:
                 try:
                     start = time.time()
@@ -368,7 +473,27 @@ def main():
                 remote = e
 
         if remote_connected:
-            raise NotImplementedError('remote')
+            for v in tqdm.tqdm(local.videos(), desc='Sending', unit='m'):
+                import pdb; pdb.set_trace()
+                locator_path = v.path + '.locator'
+                if not os.path.exists(locator_path):
+                    locator = remote.send_raws(v.recv_raws(), fn=v.path.rsplit('/',1)[-1], sha256 = hashlib.sha256(), blake2b = hashlib.blake2b())
+                    with open(locator_path, 'w') as f:
+                        f.write(locator)
+                else:
+                    with open(locator_path, 'r') as f:
+                        locator = f.read()
+                locator = json.loads(locator)
+                subproc = subprocess.run(['python3', 'download.py', locator_path], stdout=subprocess.PIPE)
+                import pdb; pdb.set_trace()
+                with open(v.path, 'rb') as f:
+                    size, sha256, blake2b = stream_size_hash(f, hashlib.sha256, hashlib.blake2)
+                size_2, sha256_2, blake2b_2 = stream_size_hash(subproc.stdout, hashlib.sha256, hashlib.blake2)
+                assert size == size2 and sha256 == sha256_2 and blake2b == blake2b_2
+                #    
+               # 
+               # if size == v.size and sha256 == v.sha256 and 
+               # local.File(local, v
         elif hdc_connected:
             with hdc_usage:
                 videos = []
