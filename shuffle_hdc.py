@@ -9,6 +9,7 @@ import json
 import math
 import fractions, time, logging, concurrent.futures, ar, hashlib, ar.utils, bundlr, flat_tree, nonblocking_stream_queue
 import _hashlib
+import subprocess
 
 def path_to_pre_time(path):
     _, name = path.rsplit('/',1)
@@ -29,7 +30,7 @@ def mp4_to_raws(path):
             f.seek(0)
             yield [start_time, f.read(), start_time] # this should be what was yielded
             return
-        with c as c:
+        with c as c, tqdm.tqdm(total=c.size, desc=path.rsplit('/',1)[-1], unit='B', unit_scale=True, unit_divisor=1024, leave=False) as pbar:
             offset = 0 ### using offset instead of packet.pos outputs the header with the first packet, if wanted
             for packet in c.demux():
                 #import pdb; pdb.set_trace()
@@ -41,18 +42,30 @@ def mp4_to_raws(path):
                 assert packet.size == packet.buffer_size
                 tail = packet.pos + packet.size
                 assert tail > offset
-                assert packet.pos == offset or offset == 0
                 #assert tail == f.tell()
                 stash = f.tell()
+                f.seek(offset)
+                if offset == 0:
+                    assert packet.pos > offset
+                    raw = f.read(packet.pos)
+                    yield [start, raw, start]
+                    offset = packet.pos
+                    pbar.update(packet.pos)
+                assert packet.pos == offset
                 #if stash != tail:
                 #    print('fp at', stash, 'but packet ends at', tail)
-                
-                f.seek(offset)
                 raw = f.read(tail - offset)
+                pbar.update(tail - offset)
                 offset = tail
                 f.seek(stash)
                 #print(start, len(raw), packet, end)
                 yield [start, raw, end]
+            #assert stash == offset
+            f.seek(offset)
+            raw = f.read()
+            yield [end, raw, end]
+            offset += len(raw)
+            pbar.update(len(raw))
             f.seek(0,2)
             assert offset == f.tell()
 
@@ -92,16 +105,59 @@ def stream_size_hash(stream, *hashes):
     return [size, *[hash.hexdigest() for hash in hashes]]
 
 class JSONEncoder(json.JSONEncoder):
+    def iterencode(self, o, _one_shot=False):
+        if self.check_circular:
+            markers = {}
+        else:
+            markers = None
+        if self.ensure_ascii:
+            _encoder = json.encoder.encode_basestring_ascii
+        else:
+            _encoder = json.encoder.encode_basestring
+        def floatstr(o, allow_nan=self.allow_nan,
+                _repr=float.__repr__, _inf=json.encoder.INFINITY, _neginf=-json.encoder.INFINITY):
+            if isinstance(o, self.Raw):
+                text = o.str
+            elif o != o:
+                text = 'NaN'
+            elif o == _inf:
+                text = 'Infinity'
+            elif o == _neginf:
+                text = '-Infinity'
+            else:
+                return _repr(o)
+            if not allow_nan:
+                raise ValueError(
+                    "Out of range float values are not JSON compliant: " +
+                    repr(o))
+
+            return text
+        return json.encoder._make_iterencode(
+            markers, self.default, _encoder, self.indent, floatstr,
+            self.key_separator, self.item_separator, self.sort_keys,
+            self.skipkeys, _one_shot
+        )(o, 0)
     def default(self, obj):
         if isinstance(obj, fractions.Fraction):
             digits = math.ceil(math.log(obj.denominator, 10))
+            # this simplified code handles only some cases
+            # if a quick fix is needed, simply change the case of the return float branch
+            # otherwise if the naive heuristic is missing valued exact decimals, improve upon it
             mul = 10 ** digits
-            obj *= mul
-            assert obj.denominator == 1
-            fixed = str(obj)
-            return fixed[:-digits] + '.' + fixed[-digits:]
+            scaled_obj = obj * mul
+            if scaled_obj.denominator == 3:
+                return float(obj)
+            else:
+                assert scaled_obj.denominator == 1
+                fixed = str(scaled_obj)
+                return self.Raw(fixed[:-digits] + '.' + fixed[-digits:])
         else:
             return super().default(self, obj)
+    class Raw(float):
+        def __init__(self, str):
+            self.str = str
+        def __repr__(self):
+            return self.str
 
 class Local:
     def __init__(self):
@@ -332,7 +388,7 @@ class ArDItemLengths:
                         hash.update(raw)
                 bundlrstorage.tags = {
                     **tags,
-                    **{ name: alg.digest() for name, alg in hash_algs.items() }
+                    **{ name: alg.hexdigest() for name, alg in hash_algs.items() }
                 }
                 indices.append(
                     sum([len(raw) for _, raw, _ in raws[:64]]),
@@ -474,8 +530,9 @@ def main():
 
         if remote_connected:
             for v in tqdm.tqdm(local.videos(), desc='Sending', unit='m'):
-                import pdb; pdb.set_trace()
                 locator_path = v.path + '.locator'
+                import pdb; pdb.set_trace()
+                raws = list(v.recv_raws())
                 if not os.path.exists(locator_path):
                     locator = remote.send_raws(v.recv_raws(), fn=v.path.rsplit('/',1)[-1], sha256 = hashlib.sha256(), blake2b = hashlib.blake2b())
                     with open(locator_path, 'w') as f:
@@ -483,13 +540,13 @@ def main():
                 else:
                     with open(locator_path, 'r') as f:
                         locator = f.read()
-                locator = json.loads(locator)
-                subproc = subprocess.run(['python3', 'download.py', locator_path], stdout=subprocess.PIPE)
-                import pdb; pdb.set_trace()
-                with open(v.path, 'rb') as f:
-                    size, sha256, blake2b = stream_size_hash(f, hashlib.sha256, hashlib.blake2)
-                size_2, sha256_2, blake2b_2 = stream_size_hash(subproc.stdout, hashlib.sha256, hashlib.blake2)
-                assert size == size2 and sha256 == sha256_2 and blake2b == blake2b_2
+                #locator = json.loads(locator)
+                #subproc = subprocess.run(['python3', 'download.py', locator_path], stdout=subprocess.PIPE)
+                #import pdb; pdb.set_trace()
+                #with open(v.path, 'rb') as f:
+                #    size, sha256, blake2b = stream_size_hash(f, hashlib.sha256, hashlib.blake2)
+                #size_2, sha256_2, blake2b_2 = stream_size_hash(subproc.stdout, hashlib.sha256, hashlib.blake2)
+                #assert size == size2 and sha256 == sha256_2 and blake2b == blake2b_2
                 #    
                # 
                # if size == v.size and sha256 == v.sha256 and 
