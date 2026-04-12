@@ -53,17 +53,18 @@ max_at_once = 32#64
 
 class BundlrStorage:
     def __init__(self, **tags):
+        #self.peer = Peer()
         self.peer = Peer('https://ar-io.dev', timeout=240)#)
         self.node = Node(timeout=240)#60)
         self.tags = tags
-        self._current_block = self.peer.current_block()
+        self._current_block = self.peer.block_current()
         self._last_block_time = time.time()
     @property
     def current_block(self):
         now = time.time()
         if now > self._last_block_time + 60:
             try:
-                self._current_block = self.peer.current_block()
+                self._current_block = self.peer.block_current()
                 self._last_block_time = now
             except:
                 pass
