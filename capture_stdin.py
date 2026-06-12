@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 
 import time
-import logging
-import concurrent.futures
 last_post_time = time.time()
+import logging
+logging.basicConfig(level=logging.DEBUG)
+import concurrent.futures
 
 from datetime import datetime
 from subprocess import Popen, PIPE
 import json
 import ar
 import hashlib
+import socket
 from ar import Peer, Wallet, DataItem, ArweaveNetworkException
 from ar.utils import create_tag
 from bundlr import Node
@@ -36,26 +38,26 @@ else:
         fh = os.fdopen(int(sys.argv[1]), 'rb')
     except:
         fh = open(sys.argv[1], 'rb')
+max_at_once = 31#64
 reader = nonblocking.Reader(
     fh,
     max_size=100000,
     lines=False,
     #lines=True,
-    max_count=16*1024,#256, #1024, # max number queued
+    max_count=2*max_at_once,#reduced for adaptive input compression 16*1024,#256, #1024, # max number queued
     drop_timeout=None, #0, # max time to wait adding to queue when full (waits forever if None)
     drop_older=True,
     pre_cb=lambda: time.time(),
     post_cb=lambda tuple: (*tuple, time.time()),
     verbose=True,
 )
-max_at_once = 32#64
 #capture = sys.stdin.buffer
 
 class BundlrStorage:
     def __init__(self, **tags):
-        #self.peer = Peer()
-        self.peer = Peer('https://ar-io.dev', timeout=240)#)
-        self.node = Node(timeout=240)#60)
+        self.peer = Peer(timeout=240, addr_family=socket.AF_INET)
+        #self.peer = Peer('https://ar-io.dev', timeout=240)#)
+        self.node = Node(timeout=240, addr_family=socket.AF_INET, period_sec=15, requests_per_period=4)
         self.tags = tags
         self._current_block = self.peer.block_current()
         self._last_block_time = time.time()
@@ -72,7 +74,7 @@ class BundlrStorage:
     def store_index(self, metadata):
         data = json.dumps(metadata).encode()
         result = self.send(data)
-        confirmation = self.send(json.dumps(result).encode())
+        #confirmation = self.send(json.dumps(result).encode())
         sha256 = hashlib.sha256()
         sha256.update(data)
         sha256 = sha256.hexdigest()
@@ -83,7 +85,7 @@ class BundlrStorage:
             ditem = [result['id']],
             min_block = (self.current_block['height'], self.current_block['indep_hash']),
             #api_block = result['block'],
-            rcpt = confirmation['id'],
+            rcpt = result,#confirmation['id'],
             sha256 = sha256,
             blake2b = blake2b,
         )
@@ -95,7 +97,7 @@ class BundlrStorage:
         #    data_array.append(send(raw[offset:offset+100000]))
         #data_array = [self.send(raw) for pre_time, raw, post_time in raws]
         data_array = list(concurrent.futures.ThreadPoolExecutor(max_workers=4).map(self.send, [raw for pre_time, raw, post_time in raws]))
-        confirmation = self.send(json.dumps(data_array).encode())
+        #confirmation = self.send(json.dumps(data_array).encode())
         sha256 = hashlib.sha256()
         for pre, raw, post in raws:
           sha256.update(raw)
@@ -111,7 +113,7 @@ class BundlrStorage:
             ),
             min_block = (self.current_block['height'], self.current_block['indep_hash']),
             #api_block = data_array[-1]['block'],
-            rcpt = confirmation['id'],
+            rcpt = data_array,#confirmation['id'],
             sha256 = sha256,
             blake2b = blake2b,
             dropped = dict(
